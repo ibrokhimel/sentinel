@@ -1,0 +1,16 @@
+# dependencies & build output
+node_modules/
+out/
+dist/
+
+# Sentinel runtime data (managed bots, logs, registry) — lives in this folder
+bots/
+logs/
+registry.json
+
+# secrets — contains bot tokens and agent keys, never commit
+config.json
+
+# misc
+.DS_Store
+*.log
