@@ -16,17 +16,11 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { spawn, type ChildProcess } from 'node:child_process'
-import * as sup from '../supervisor'
 import {
-  getAppConfig,
   getControlConfig,
-  isUserApproved,
-  setAutoApprove,
-  setAutoUpdateEnabled,
-  setNotifyConfig,
-  setAgentConfig
+  isUserApproved
 } from '../config'
-import { tailBotLogs } from '../telegramBot'
+import { ROUTES, type RouteCtx } from './routes/index'
 import { resolveBinSync } from '../node'
 import { notifyOwner } from '../notify'
 import { MINIAPP_HTML } from './frontend'
@@ -36,9 +30,6 @@ import { MINIAPP_HTML } from './frontend'
 const PORT = Number(process.env.SENTINEL_MINIAPP_PORT) || 8787
 /** Reject initData older than this (replay protection). */
 const MAX_AUTH_AGE_SEC = 24 * 60 * 60
-/** Keys whose env values are secrets — masked over the wire. */
-const SECRET_KEY_RE = /TOKEN|HASH|SECRET|PASSWORD|KEY|API_ID|SESSION/i
-
 type AuthCtx = { userId: number; isOwner: boolean }
 
 export class MiniAppService {
@@ -184,107 +175,17 @@ export class MiniAppService {
     return null
   }
 
-  private async api(
-    path: string,
-    req: IncomingMessage,
-    res: ServerResponse,
-    auth: AuthCtx,
-    url: URL
-  ): Promise<void> {
-    // --- read endpoints ---
-    if (req.method === 'GET' && path === '/api/state') {
-      const bots = await sup.listBots()
-      return this.json(res, 200, { bots, config: getAppConfig(), owner: auth.isOwner })
-    }
-    if (req.method === 'GET' && path === '/api/logs') {
-      const id = url.searchParams.get('id') ?? ''
-      const n = Math.min(200, Math.max(10, Number(url.searchParams.get('n')) || 60))
-      return this.json(res, 200, { text: tailBotLogs(id, n) })
-    }
-    if (req.method === 'GET' && path === '/api/env') {
-      const id = url.searchParams.get('id') ?? ''
-      const env = sup.getEnv(id)
-      // Mask secret values; tell the UI which keys are secret + already set.
-      const current: Record<string, string> = {}
-      const secretKeys: string[] = []
-      for (const k of env.keys) {
-        const isSecret = SECRET_KEY_RE.test(k)
-        if (isSecret) secretKeys.push(k)
-        current[k] = isSecret ? (env.current[k] ? '' : '') : (env.current[k] ?? '')
-      }
-      const hasValue: Record<string, boolean> = {}
-      for (const k of env.keys) hasValue[k] = Boolean(env.current[k])
-      return this.json(res, 200, { keys: env.keys, current, secretKeys, hasValue })
-    }
-
-    // --- write endpoints (owner only) ---
+  private async api(path: string, req: IncomingMessage, res: ServerResponse, auth: AuthCtx, url: URL): Promise<void> {
+    let body: Record<string, unknown> = {}
     if (req.method === 'POST') {
-      if (!auth.isOwner) return this.json(res, 403, { error: 'owner only' })
-      const bodyText = await readBody(req)
-      const body = bodyText ? JSON.parse(bodyText) : {}
-
-      if (path === '/api/action') return await this.action(res, body)
-      if (path === '/api/env') return await this.saveEnv(res, body)
-      if (path === '/api/settings') return this.saveSettings(res, body)
+      const text = await readBody(req)
+      body = text ? JSON.parse(text) : {}
     }
-
-    this.json(res, 404, { error: 'unknown endpoint' })
-  }
-
-  private async action(res: ServerResponse, body: { id?: string; action?: string }): Promise<void> {
-    const id = String(body.id ?? '')
-    switch (body.action) {
-      case 'start':
-        await sup.start(id)
-        break
-      case 'stop':
-        await sup.stop(id)
-        break
-      case 'restart':
-        await sup.restart(id)
-        break
-      case 'autostart-on':
-        await sup.setAutostart(id, true)
-        break
-      case 'autostart-off':
-        await sup.setAutostart(id, false)
-        break
-      default:
-        return this.json(res, 400, { error: 'unknown action' })
-    }
-    return this.json(res, 200, { ok: true, bot: await sup.getBot(id) })
-  }
-
-  private async saveEnv(res: ServerResponse, body: { id?: string; values?: Record<string, string> }): Promise<void> {
-    const id = String(body.id ?? '')
-    const incoming = body.values ?? {}
-    const existing = sup.getEnv(id).current
-    // Merge: keep existing secrets when the field was left blank (masked).
-    const merged: Record<string, string> = { ...existing }
-    for (const [k, v] of Object.entries(incoming)) {
-      if (v === '' && SECRET_KEY_RE.test(k) && existing[k]) continue // don't wipe a hidden secret
-      merged[k] = v
-    }
-    await sup.saveEnv(id, merged)
-    return this.json(res, 200, { ok: true })
-  }
-
-  private saveSettings(res: ServerResponse, body: Record<string, unknown>): void {
-    // Only the safe subset is mutable from the phone. `control.enabled` and
-    // `backgroundAgent` are intentionally read-only here: toggling control off
-    // would kill this very dashboard, and backgroundAgent has heavy install-time
-    // side effects that belong to the desktop app.
-    if (typeof body.autoApprove === 'boolean') setAutoApprove(body.autoApprove)
-    if (typeof body.autoUpdateEnabled === 'boolean') setAutoUpdateEnabled(body.autoUpdateEnabled)
-    if (body.notify && typeof body.notify === 'object') {
-      const n = body.notify as { enabled?: boolean; chatId?: string }
-      setNotifyConfig({ enabled: n.enabled, chatId: n.chatId })
-    }
-    if (body.agent && typeof body.agent === 'object') {
-      const a = body.agent as { baseUrl?: string; model?: string; key?: string }
-      setAgentConfig({ baseUrl: a.baseUrl, model: a.model, key: a.key })
-    }
-    this.json(res, 200, { ok: true, config: getAppConfig() })
+    const route = ROUTES.find((r) => r.method === req.method && r.path === path)
+    if (!route) return this.json(res, 404, { error: 'unknown endpoint' })
+    if (route.ownerOnly && !auth.isOwner) return this.json(res, 403, { error: 'owner only' })
+    const ctx: RouteCtx = { req, res, url, auth, body, json: (s, p) => this.json(res, s, p) }
+    return await route.handler(ctx)
   }
 
   private json(res: ServerResponse, status: number, payload: unknown): void {
