@@ -15,4 +15,13 @@ describe('miniapp html', () => {
     expect(MINIAPP_HTML).toContain('--glass')
     expect(MINIAPP_HTML).toContain('@keyframes')
   })
+  it('registers fleet + settings views', () => {
+    expect(MINIAPP_HTML).toContain("registerView('fleet'")
+    expect(MINIAPP_HTML).toContain("registerView('settings'")
+  })
+  it('fleet view renders bot rows + opens detail; settings has AI section', () => {
+    expect(MINIAPP_HTML).toContain('openDetail')
+    expect(MINIAPP_HTML).toContain('data-act="start"')
+    expect(MINIAPP_HTML).toContain('AI agent')
+  })
 })
