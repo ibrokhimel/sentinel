@@ -87,7 +87,7 @@ export const fleetView: { js: string } = {
     +   'if(chatBtn)chatBtn.addEventListener(\'click\',function(){'
     +     'App.haptic(\'light\');chatBtn.disabled=true;'
     +     'App.api(\'/api/chat/sessions\',{method:\'POST\',body:JSON.stringify({botId:m.id,mode:\'ask\',title:m.name})})'
-    +       '.then(function(){App.go(\'chat\');})'
+    +       '.then(function(r){App.state.openSessionId=r.session.id;App.go(\'chat\');})'
     +       '.catch(function(e){chatBtn.disabled=false;App.toast(e.message,\'err\');});'
     +   '});'
     + '}'

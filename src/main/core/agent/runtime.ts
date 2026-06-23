@@ -29,6 +29,8 @@ export interface RunAgentOpts {
   events?: AgentEvents
   /** Prior conversation turns (clean user/assistant text) for continuity. */
   history?: ChatMessage[]
+  /** Abort signal — when aborted, the tool-calling loop halts cleanly. */
+  signal?: AbortSignal
 }
 
 function systemPrompt(allowWrites: boolean, scope: 'bot' | 'self'): string {
@@ -78,7 +80,10 @@ export async function runAgent(o: RunAgentOpts): Promise<string> {
   let last = ''
 
   for (let step = 0; step < maxSteps; step++) {
-    const msg = await chatCompletion(o.provider, messages, schemas)
+    // Client disconnected (e.g. phone closed the SSE stream): stop the loop
+    // cleanly so we don't keep making LLM calls / running tools with no client.
+    if (o.signal?.aborted) return last
+    const msg = await chatCompletion(o.provider, messages, schemas, o.signal)
     messages.push(msg)
     if (msg.content) {
       last = msg.content

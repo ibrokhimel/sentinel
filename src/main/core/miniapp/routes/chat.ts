@@ -67,6 +67,7 @@ async function stream(c: RouteCtx): Promise<void> {
         allowWrites: false,
         scope: 'bot',
         history,
+        signal: ac.signal,
         events: {
           onText: (t) => send({ type: 'delta', text: t }),
           onTool: (name, args) => send({ type: 'tool', name, args }),
