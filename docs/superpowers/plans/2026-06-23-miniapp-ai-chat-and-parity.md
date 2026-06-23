@@ -291,13 +291,10 @@ describe('miniapp html', () => {
     expect(MINIAPP_HTML.startsWith('<!doctype html>')).toBe(true)
     expect(MINIAPP_HTML).toContain('telegram-web-app.js')
   })
-  it('exposes the view registry + api helper', () => {
+  it('exposes the view registry + api helper + tab bar', () => {
     expect(MINIAPP_HTML).toContain('registerView')
     expect(MINIAPP_HTML).toContain('X-Tg-Init-Data')
-  })
-  it('registers the three Wave-1 views', () => {
-    expect(MINIAPP_HTML).toContain("registerView('fleet'")
-    expect(MINIAPP_HTML).toContain("registerView('settings'")
+    expect(MINIAPP_HTML).toContain('id="tabbar"')
   })
   it('contains the glass design tokens + animation keyframes', () => {
     expect(MINIAPP_HTML).toContain('--glass')
@@ -415,15 +412,14 @@ export function assemble(views: { css?: string; js: string }[]): string {
 ```
 Wire the `refresh` button (done above). Define `CSS` const above `HEAD`.
 
-- [ ] **Step 6: Create `frontend/index.ts`** assembling Wave-1 views (fleet, botDetail folded into fleet, settings):
+- [ ] **Step 6: Create `frontend/index.ts`** with an empty view list for now (Task 3 wires the views in — keeping Task 2 self-contained and compilable):
 
 ```ts
 import { assemble } from './shell'
-import { fleetView } from './views/fleet'
-import { settingsView } from './views/settings'
-export const MINIAPP_HTML = assemble([fleetView, settingsView])
+// Task 3 adds: import { fleetView } from './views/fleet' etc., and passes them here.
+export const MINIAPP_HTML = assemble([])
 ```
-(Each `views/*.ts` exports `{ css?, js }`; `botDetail` is imported by `fleet` and contributes its JS within `fleet.js`, OR is its own entry in the array — Task 3 decides. Keep botDetail folded into fleet for v1.)
+Each `views/*.ts` will export `{ css?, js }`. `botDetail` is folded into `fleet` for v1.
 
 - [ ] **Step 7: Replace `frontend.ts` body** with `export { MINIAPP_HTML } from './frontend/index'` so `service.ts`'s `import { MINIAPP_HTML } from './frontend'` still resolves.
 
@@ -443,6 +439,7 @@ git commit -m "feat(miniapp): glassmorphic shell — design system, animations, 
 **Files:**
 - Create: `src/main/core/miniapp/frontend/views/fleet.ts` (includes bot-detail render)
 - Create: `src/main/core/miniapp/frontend/views/settings.ts`
+- Modify: `src/main/core/miniapp/frontend/index.ts` (import both views; pass to `assemble([...])`)
 - Test: extend `miniapp.frontend.test.ts`
 
 **Interfaces:**
@@ -452,6 +449,10 @@ git commit -m "feat(miniapp): glassmorphic shell — design system, animations, 
 - [ ] **Step 1: Add failing assertions** to `miniapp.frontend.test.ts`:
 
 ```ts
+it('registers fleet + settings views', () => {
+  expect(MINIAPP_HTML).toContain("registerView('fleet'")
+  expect(MINIAPP_HTML).toContain("registerView('settings'")
+})
 it('fleet view renders bot rows + opens detail; settings has AI section', () => {
   expect(MINIAPP_HTML).toContain('openDetail')
   expect(MINIAPP_HTML).toContain('data-act="start"')
@@ -484,6 +485,15 @@ export const fleetView = { js: `
 Port the detail/logs/env bodies verbatim from current `frontend.ts` (lines 178-264), substituting `api`→`App.api`, `showErr`→`App.toast(.,'err')`, `esc`→`App.esc`, `dot`→`App.dot`, `pill`→`App.pill`, `state`→the `st` passed in / `App.state`, and `render()`→re-`openDetail`/`App.go('fleet')`. **Show the full ported code** (do not leave the `/* port ... */` comment — expand it).
 
 - [ ] **Step 4: Write `views/settings.ts`** — port `renderSettings`/`switchRow`/`field`/`wireSwitches`/`saveSettings` from `frontend.ts:267-336` into a registered `settingsView` with `owner` not required to view (read-only fields when `!st.owner`). Use `.glass` cards. Expand the full ported code.
+
+- [ ] **Step 4b: Wire the views into `frontend/index.ts`** — change it to import and assemble them:
+
+```ts
+import { assemble } from './shell'
+import { fleetView } from './views/fleet'
+import { settingsView } from './views/settings'
+export const MINIAPP_HTML = assemble([fleetView, settingsView])
+```
 
 - [ ] **Step 5: Run tests + build**
 
