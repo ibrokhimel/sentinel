@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { stateRoutes } from './state'
+import { chatRoutes } from './chat'
 
 export interface RouteCtx {
   req: IncomingMessage
@@ -18,4 +19,4 @@ export interface Route {
 
 // Wave 2 agents append their arrays here:
 //   import { chatRoutes } from './chat'  → ...chatRoutes
-export const ROUTES: Route[] = [...stateRoutes]
+export const ROUTES: Route[] = [...stateRoutes, ...chatRoutes]
