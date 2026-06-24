@@ -25,6 +25,7 @@ import { resolveBinSync } from '../node'
 import { notifyOwner } from '../notify'
 import { MINIAPP_HTML } from './frontend'
 import { createHash } from 'node:crypto'
+import { ForbiddenError } from './authz'
 
 /** Content hash of the served HTML — appended to the menu-button URL as `?v=`
  *  so Telegram's WebView treats a rebuilt dashboard as a new URL and reloads
@@ -191,7 +192,12 @@ export class MiniAppService {
     if (!route) return this.json(res, 404, { error: 'unknown endpoint' })
     if (route.ownerOnly && !auth.isOwner) return this.json(res, 403, { error: 'owner only' })
     const ctx: RouteCtx = { req, res, url, auth, body, json: (s, p) => this.json(res, s, p) }
-    return await route.handler(ctx)
+    try {
+      return await route.handler(ctx)
+    } catch (e) {
+      if (e instanceof ForbiddenError) return this.json(res, 403, { error: 'forbidden' })
+      throw e
+    }
   }
 
   private json(res: ServerResponse, status: number, payload: unknown): void {
