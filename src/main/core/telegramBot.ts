@@ -1195,11 +1195,18 @@ export class TelegramControlBot {
     await this.runAgentForBot(chatId, bot, question, allowWrites && can(chatId, isOwner, findEntry(bot.manifest.id), 'editEnv'))
   }
 
-  /** Entry point for the 🤖 Ask AI / 🛠 Fix buttons — prompts for the request. */
+  /** Entry point for the 🤖 Ask AI / 🛠 Fix buttons — prompts for the request.
+   *  Currently reached only via host-only onCallback; can() gates are defense-in-depth for future non-host callers.
+   */
   private async startAgentForBot(chatId: number, botId: string, allowWrites: boolean): Promise<void> {
     const b = (await sup.listBots()).find((x) => x.manifest.id === botId)
     if (!b) {
       await this.send(chatId, 'That bot is gone.')
+      return
+    }
+    const isOwner = isAuthorized(chatId, this.getConfig().ownerChatId)
+    if (!can(chatId, isOwner, findEntry(botId), 'view')) {
+      await this.send(chatId, 'Not allowed.')
       return
     }
     this.lastBot.set(chatId, botId)
@@ -1215,7 +1222,7 @@ export class TelegramControlBot {
       await this.send(chatId, 'Cancelled.')
       return
     }
-    await this.runAgentForBot(chatId, b, q, allowWrites)
+    await this.runAgentForBot(chatId, b, q, allowWrites && can(chatId, isOwner, findEntry(botId), 'editEnv'))
   }
 
   /** Run the agent loop against one bot and stream progress to the chat. */
