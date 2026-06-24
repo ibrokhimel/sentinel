@@ -24,6 +24,27 @@ export interface LaunchStatus {
   runs: number
 }
 
+/**
+ * Clear any stale "disabled" override for this label in launchd's per-user
+ * database. Sentinel never disables services itself, but a manual
+ * `launchctl disable`, or some bootout/reboot sequences, can leave a label
+ * flagged disabled — which makes `bootstrap` fail with "Input/output error"
+ * (errno 5) AND silently neutralizes RunAtLoad/KeepAlive, stranding the bot
+ * down forever. Enabling is idempotent and harmless when not disabled.
+ */
+export async function enable(botId: string): Promise<void> {
+  await exec('launchctl', ['enable', await domainTarget(botLabel(botId))]).catch(() => undefined)
+}
+
+/** True if launchd has this label flagged "disabled" in its per-user override DB. */
+export async function isDisabled(botId: string): Promise<boolean> {
+  const r = await exec('launchctl', ['print-disabled', `gui/${await uid()}`])
+  if (r.code !== 0) return false
+  // Lines look like:  "com.sentinel.<id>" => disabled
+  const re = new RegExp(`"${botLabel(botId)}"\\s*=>\\s*disabled`)
+  return re.test(r.stdout)
+}
+
 /** Write the plist to ~/Library/LaunchAgents and bootstrap (load) it. */
 export async function installAgent(botId: string, cfg: PlistConfig): Promise<void> {
   mkdirSync(LAUNCH_AGENTS_DIR, { recursive: true })
@@ -33,6 +54,10 @@ export async function installAgent(botId: string, cfg: PlistConfig): Promise<voi
   // If already loaded, bootout first so the new plist takes effect.
   await bootout(botId).catch(() => undefined)
 
+  // Always clear a stale "disabled" override before loading — otherwise
+  // bootstrap fails with errno 5 and KeepAlive/RunAtLoad never fire.
+  await enable(botId)
+
   const u = await uid()
   let res = await exec('launchctl', ['bootstrap', `gui/${u}`, path])
   if (res.code !== 0) {
@@ -40,6 +65,14 @@ export async function installAgent(botId: string, cfg: PlistConfig): Promise<voi
     // force another bootout and retry once.
     if (/already (loaded|bootstrapped)|service already/i.test(res.stderr)) {
       await bootout(botId)
+      res = await exec('launchctl', ['bootstrap', `gui/${u}`, path])
+    }
+    // "Input/output error" (errno 5) here almost always means a lingering
+    // disabled override or a half-torn-down registration; re-enable, force a
+    // clean bootout, and retry once more.
+    if (res.code !== 0 && /input\/output error|\b5:\s|disabled/i.test(res.stderr)) {
+      await enable(botId)
+      await bootout(botId).catch(() => undefined)
       res = await exec('launchctl', ['bootstrap', `gui/${u}`, path])
     }
     if (res.code !== 0) {

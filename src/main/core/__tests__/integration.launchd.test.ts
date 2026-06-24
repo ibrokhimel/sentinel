@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as launchctl from '../launchctl'
@@ -83,6 +84,49 @@ maybe('launchd full lifecycle (real)', () => {
       expect(s3.running).toBe(false)
     } finally {
       await launchctl.uninstallAgent(id).catch(() => undefined)
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }, 30_000)
+
+  // Regression: a label left in launchd's "disabled" override DB used to make
+  // installAgent fail with "Input/output error" (errno 5) and stranded the bot
+  // down (KeepAlive/RunAtLoad are ignored while disabled). installAgent now
+  // enables the label before bootstrap, so recovery must just work.
+  it('recovers a service that was disabled out-of-band', async () => {
+    const id = `itestd${Date.now().toString(36)}`
+    const dir = mkdtempSync(join(tmpdir(), 'sentinel-itestd-'))
+    writeFileSync(
+      join(dir, 'bot.py'),
+      'import os, time\nprint("pid", os.getpid(), flush=True)\nwhile True:\n    time.sleep(30)\n'
+    )
+    const label = `com.sentinel.${id}`
+    const uid = execFileSync('id', ['-u']).toString().trim()
+    const cfg = {
+      label,
+      programArgs: ['/usr/bin/python3', join(dir, 'bot.py')],
+      workingDir: dir,
+      stdoutPath: join(dir, 'out.log'),
+      stderrPath: join(dir, 'err.log'),
+      restartPolicy: 'always' as const,
+      runAtLoad: true,
+      throttleInterval: 2
+    }
+    try {
+      // Install, then disable + unload it out-of-band (mimics the failure).
+      await launchctl.installAgent(id, cfg)
+      execFileSync('launchctl', ['disable', `gui/${uid}/${label}`])
+      await launchctl.bootout(id).catch(() => undefined)
+      expect(await launchctl.isDisabled(id)).toBe(true)
+
+      // installAgent must now succeed despite the disabled override...
+      await launchctl.installAgent(id, cfg)
+      await sleep(2000)
+      expect(await launchctl.isDisabled(id)).toBe(false)
+      const s = await launchctl.status(id)
+      expect(s.running).toBe(true)
+    } finally {
+      await launchctl.uninstallAgent(id).catch(() => undefined)
+      execFileSync('launchctl', ['enable', `gui/${uid}/${label}`], { stdio: 'ignore' })
       rmSync(dir, { recursive: true, force: true })
     }
   }, 30_000)
