@@ -7,8 +7,8 @@ describe('route table', () => {
     expect(find('GET', '/api/state')?.ownerOnly).toBe(false)
     expect(find('GET', '/api/logs')?.ownerOnly).toBe(false)
     expect(find('GET', '/api/env')?.ownerOnly).toBe(false)
-    expect(find('POST', '/api/action')?.ownerOnly).toBe(true)
-    expect(find('POST', '/api/env')?.ownerOnly).toBe(true)
+    expect(find('POST', '/api/action')?.ownerOnly).toBe(false) // per-bot assertCap enforces ownership
+    expect(find('POST', '/api/env')?.ownerOnly).toBe(false) // per-bot assertCap enforces ownership
     expect(find('POST', '/api/settings')?.ownerOnly).toBe(true)
   })
   it('has no duplicate method+path', () => {
