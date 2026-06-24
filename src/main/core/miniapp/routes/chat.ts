@@ -6,15 +6,17 @@
  * Two modes:
  *   - 'chat' (Main): a read-only FLEET agent run — answers cross-bot questions
  *     with specifics (list_bots / get_bot_status / read_bot_logs).
- *   - 'ask'  (per-bot): an agent run over one bot dir. Read-only for non-owners;
- *     for the owner it can ACT — immediately when YOLO (autoApprove) is on, or
- *     with a per-action confirmation prompt on the phone when it isn't.
+ *     Fleet scope enumerates ALL bots → host-only.
+ *   - 'ask'  (per-bot): an agent run over one bot dir. The bot must be visible
+ *     to the caller. Write access requires editEnv capability (owner/host only).
  */
 import { randomUUID } from 'node:crypto'
 import * as sup from '../../supervisor'
 import { getAgentConfig, getAppConfig } from '../../config'
 import { type AgentProvider, type ChatMessage } from '../../agent/provider'
 import { runAgent } from '../../agent/runtime'
+import { findEntry } from '../../registry'
+import { can, assertCap } from '../authz'
 import * as S from '../sessions'
 import type { Route, RouteCtx } from './index'
 
@@ -32,9 +34,27 @@ const pendingConfirms = new Map<string, (ok: boolean) => void>()
 
 async function stream(c: RouteCtx): Promise<void> {
   const b = c.body as { id?: string; message?: string }
-  const sess = b.id ? S.getSession(b.id) : S.getSession(S.MAIN_ID)
+  const sessId = b.id || S.mainIdFor(c.auth.userId)
+  const sess = S.getSessionFor(c.auth.userId, sessId)
   const msg = String(b.message ?? '').trim()
   const res = c.res
+
+  // Visibility check for 'ask' sessions — do this BEFORE writing SSE headers so
+  // a ForbiddenError propagates to 403 via service.ts cleanly.
+  if (sess && sess.mode === 'ask' && sess.botId) {
+    const entry = findEntry(String(sess.botId))
+    if (!can(c.auth.userId, c.auth.isOwner, entry, 'view')) {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive'
+      })
+      const send = (o: unknown): boolean => res.write('data: ' + JSON.stringify(o) + '\n\n')
+      send({ type: 'error', message: 'forbidden' })
+      return void res.end()
+    }
+  }
+
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-cache',
@@ -79,6 +99,11 @@ async function stream(c: RouteCtx): Promise<void> {
   try {
     const history: ChatMessage[] = sess.messages.map((m) => ({ role: m.role, content: m.content }))
     if (sess.mode === 'chat') {
+      // Fleet scope enumerates ALL bots → host-only.
+      if (!c.auth.isOwner) {
+        send({ type: 'error', message: 'Fleet chat is host-only — open one of your bots to chat about it.' })
+        return void res.end()
+      }
       // Main session: read-only fleet operator — answers cross-bot questions
       // with specifics instead of a generic refusal.
       send({ type: 'mode', allowWrites: false })
@@ -96,15 +121,16 @@ async function stream(c: RouteCtx): Promise<void> {
     } else {
       const bot = await sup.getBot(sess.botId as string)
       // Gating for the per-bot manager:
-      //   non-owner            → read-only (allowWrites:false).
-      //   owner + YOLO         → allowWrites:true, no confirm handler → acts now.
-      //   owner + !YOLO        → allowWrites:true WITH a per-action confirm that
-      //                          asks the phone before each mutating tool runs.
-      const allowWrites = c.auth.isOwner
+      //   no editEnv cap        → read-only (allowWrites:false).
+      //   editEnv cap + YOLO    → allowWrites:true, no confirm handler → acts now.
+      //   editEnv cap + !YOLO   → allowWrites:true WITH a per-action confirm that
+      //                           asks the phone before each mutating tool runs.
+      const entry = findEntry(String(sess.botId))
+      const allowWrites = can(c.auth.userId, c.auth.isOwner, entry, 'editEnv')
       const yolo = getAppConfig().autoApprove
       send({ type: 'mode', allowWrites })
       const confirm =
-        c.auth.isOwner && !yolo
+        allowWrites && !yolo
           ? (summary: string): Promise<boolean> =>
               new Promise<boolean>((resolve) => {
                 const token = randomUUID()
@@ -154,56 +180,72 @@ export const chatRoutes: Route[] = [
   {
     method: 'GET',
     path: '/api/chat/sessions',
-    ownerOnly: true,
+    ownerOnly: false,
     handler: (c) => {
       const botId = c.url.searchParams.get('botId')
-      c.json(200, { sessions: S.listSessions(botId === null ? undefined : botId) })
+      c.json(200, { sessions: S.listSessions(c.auth.userId, botId === null ? undefined : botId) })
     }
   },
   {
     method: 'POST',
     path: '/api/chat/sessions',
-    ownerOnly: true,
+    ownerOnly: false,
     handler: (c) => {
       const b = c.body as { botId?: string | null; mode?: string; title?: string }
+      const mode = b.mode === 'ask' ? 'ask' : 'chat'
+      // If creating an 'ask' session for a specific bot, verify caller can see it.
+      if (mode === 'ask' && b.botId) {
+        assertCap(c.auth.userId, c.auth.isOwner, String(b.botId), 'view')
+      }
       c.json(200, {
-        session: S.createSession({ botId: b.botId ?? null, mode: b.mode === 'ask' ? 'ask' : 'chat', title: b.title })
+        session: S.createSession({
+          ownerId: c.auth.userId,
+          botId: b.botId ?? null,
+          mode,
+          title: b.title
+        })
       })
     }
   },
   {
     method: 'POST',
     path: '/api/chat/sessions/rename',
-    ownerOnly: true,
+    ownerOnly: false,
     handler: (c) => {
       const b = c.body as { id?: string; title?: string }
-      const s = S.renameSession(String(b.id), String(b.title || ''))
+      const owned = S.getSessionFor(c.auth.userId, String(b.id))
+      if (!owned) return c.json(404, { error: 'not found' })
+      const s = S.renameSession(owned.id, String(b.title || ''))
       c.json(s ? 200 : 404, s ? { session: s } : { error: 'not found' })
     }
   },
   {
     method: 'POST',
     path: '/api/chat/sessions/delete',
-    ownerOnly: true,
+    ownerOnly: false,
     handler: (c) => {
-      const ok = S.deleteSession(String((c.body as { id?: string }).id))
+      const owned = S.getSessionFor(c.auth.userId, String((c.body as { id?: string }).id))
+      if (!owned) return c.json(404, { error: 'not found' })
+      const ok = S.deleteSession(owned.id)
       c.json(ok ? 200 : 400, ok ? { ok: true } : { error: 'cannot delete' })
     }
   },
   {
     method: 'POST',
     path: '/api/chat/sessions/reset',
-    ownerOnly: true,
+    ownerOnly: false,
     handler: (c) => {
-      const s = S.resetSession(String((c.body as { id?: string }).id))
+      const owned = S.getSessionFor(c.auth.userId, String((c.body as { id?: string }).id))
+      if (!owned) return c.json(404, { error: 'not found' })
+      const s = S.resetSession(owned.id)
       c.json(s ? 200 : 404, s ? { session: s } : { error: 'not found' })
     }
   },
-  { method: 'POST', path: '/api/chat/stream', ownerOnly: true, handler: stream },
+  { method: 'POST', path: '/api/chat/stream', ownerOnly: false, handler: stream },
   {
     method: 'POST',
     path: '/api/chat/confirm',
-    ownerOnly: true,
+    ownerOnly: false,
     handler: (c) => {
       const b = c.body as { token?: string; approve?: boolean }
       const token = String(b.token ?? '')
