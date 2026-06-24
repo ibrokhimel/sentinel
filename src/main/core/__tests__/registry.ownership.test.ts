@@ -13,13 +13,18 @@ vi.mock('node:fs', () => ({
   cpSync: () => undefined,
   rmSync: () => undefined
 }))
-vi.mock('../config', () => ({ getHostUid: () => 1000 }))
+
+const hostUid = vi.fn((): number | null => 1000)
+vi.mock('../config', () => ({ getHostUid: () => hostUid() }))
 
 import { REGISTRY_PATH } from '../paths'
 import { readRegistry, setBotOwner, botsOwnedBy } from '../registry'
 
 describe('registry ownership', () => {
-  beforeEach(() => files.clear())
+  beforeEach(() => {
+    files.clear()
+    hostUid.mockReturnValue(1000)
+  })
 
   it('migrates unowned entries to the host uid (idempotent)', () => {
     files.set(REGISTRY_PATH, JSON.stringify([{ id: 'a', name: 'A', dirName: 'a' }]))
@@ -37,5 +42,13 @@ describe('registry ownership', () => {
     setBotOwner('b', 2000)
     expect(botsOwnedBy(2000).map((e) => e.id)).toEqual(['b'])
     expect(botsOwnedBy(1000).map((e) => e.id)).toEqual(['a'])
+  })
+
+  it('does not stamp ownership when the host uid is unset', () => {
+    hostUid.mockReturnValue(null)
+    files.set(REGISTRY_PATH, JSON.stringify([{ id: 'a', name: 'A', dirName: 'a' }]))
+    const before = files.get(REGISTRY_PATH)
+    expect(readRegistry()[0].ownerId).toBeUndefined()
+    expect(files.get(REGISTRY_PATH)).toBe(before) // no write-back
   })
 })
