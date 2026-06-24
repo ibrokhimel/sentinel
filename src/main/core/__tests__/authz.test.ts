@@ -1,6 +1,11 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { can, ForbiddenError, assertCap } from '../miniapp/authz'
 import type { RegistryEntry } from '../registry'
+
+vi.mock('../registry', () => ({
+  findEntry: (id: string) => (id === 'b' ? { id: 'b', name: 'B', dirName: 'b', ownerId: 1 } : undefined),
+  readRegistry: () => [{ id: 'b', name: 'B', dirName: 'b', ownerId: 1 }]
+}))
 
 const owned = (uid: number): RegistryEntry => ({ id: 'b', name: 'B', dirName: 'b', ownerId: uid })
 const withCollab = (caps: Record<string, boolean>): RegistryEntry => ({
@@ -33,10 +38,18 @@ describe('can() truth table', () => {
   it('unknown bot for non-host is denied', () => {
     expect(can(2, false, undefined, 'view')).toBe(false)
   })
+  it('denies a collaborator whose toggle is truthy but not exactly true', () => {
+    const entry = { id: 'b', name: 'B', dirName: 'b', ownerId: 1, collaborators: { '2': { editEnv: 1 as unknown as boolean } } }
+    expect(can(2, false, entry as never, 'editEnv')).toBe(false)
+  })
 })
 
 describe('assertCap', () => {
   it('throws ForbiddenError for a denied capability', () => {
     expect(() => assertCap(3, false, 'nope', 'view')).toThrow(ForbiddenError)
+  })
+  it('returns the entry when allowed', () => {
+    const e = assertCap(1, false, 'b', 'editEnv') // owner of bot b
+    expect(e.id).toBe('b')
   })
 })

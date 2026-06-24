@@ -59,7 +59,12 @@ async function stream(c: RouteCtx): Promise<void> {
   // Tokens of confirmations issued for THIS request, so a client disconnect can
   // resolve them false (reject) and never hang the agent loop past the stream.
   const myTokens = new Set<string>()
-  c.req.on('close', () => {
+  res.on('close', () => {
+    // Abort only when the SSE response closes before we intentionally ended it.
+    // IncomingMessage 'close' fires after the POST body is read even for healthy
+    // requests; using it here aborted the provider fetch immediately and surfaced
+    // to the Mini App as a bare "fetch failed".
+    if (res.writableEnded) return
     ac.abort()
     for (const token of myTokens) {
       const resolve = pendingConfirms.get(token)

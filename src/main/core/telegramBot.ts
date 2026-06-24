@@ -10,7 +10,9 @@
  * so the caller starts this in exactly one process: the headless `--agent`
  * monitor when installed, otherwise the GUI (see index.ts).
  */
-import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync, statSync, copyFileSync } from 'node:fs'
+import { execFile } from 'node:child_process'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync, statSync, copyFileSync, mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import type { Bot } from '@shared/types'
 import * as sup from './supervisor'
@@ -265,6 +267,43 @@ const HELP =
   '/cancel — abort the current prompt\n' +
   '/help — this message\n\n' +
   'Or just tap the buttons below.'
+
+function postTelegramJson(token: string, method: string, params: unknown, signal?: AbortSignal): Promise<string> {
+  const dir = mkdtempSync(join(tmpdir(), 'sentinel-tg-'))
+  const bodyPath = join(dir, 'body.json')
+  const cfgPath = join(dir, 'curl.conf')
+  const esc = (s: string): string => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+  writeFileSync(bodyPath, JSON.stringify(params), { mode: 0o600 })
+  writeFileSync(
+    cfgPath,
+    [
+      'silent',
+      'show-error',
+      'fail-with-body',
+      'location',
+      'ipv4',
+      'resolve = "api.telegram.org:443:149.154.166.110"',
+      'request = "POST"',
+      'connect-timeout = 15',
+      method === 'getUpdates' ? 'max-time = 65' : 'max-time = 35',
+      `url = "${esc(`${API}/bot${token}/${method}`)}"`,
+      'header = "Content-Type: application/json"',
+      `data-binary = "@${esc(bodyPath)}"`
+    ].join('\n'),
+    { mode: 0o600 }
+  )
+  return new Promise((resolve, reject) => {
+    const child = execFile('/usr/bin/curl', ['--config', cfgPath], { timeout: method === 'getUpdates' ? 70_000 : 40_000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
+      rmSync(dir, { recursive: true, force: true })
+      if (err) reject(new Error(stderr || err.message))
+      else resolve(stdout)
+    })
+    if (signal) {
+      if (signal.aborted) child.kill()
+      else signal.addEventListener('abort', () => child.kill(), { once: true })
+    }
+  })
+}
 
 export class TelegramControlBot {
   private running = false
@@ -1631,13 +1670,19 @@ export class TelegramControlBot {
   }
 
   private async call<T = any>(method: string, params: unknown, signal?: AbortSignal): Promise<T> {
-    const res = await fetch(`${API}/bot${this.token}/${method}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
-      signal
-    })
-    const json = (await res.json()) as { ok: boolean; result?: T; description?: string }
+    let text: string
+    try {
+      const res = await fetch(`${API}/bot${this.token}/${method}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+        signal
+      })
+      text = await res.text()
+    } catch {
+      text = await postTelegramJson(this.token, method, params, signal)
+    }
+    const json = JSON.parse(text) as { ok: boolean; result?: T; description?: string }
     if (!json.ok) throw new Error(json.description ?? `Telegram ${method} failed`)
     return json.result as T
   }
