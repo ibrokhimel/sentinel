@@ -23,6 +23,18 @@ interface StoredConfig {
   autoApprove: boolean
   autoUpdateEnabled: boolean
   backgroundAgent: boolean
+  /** Telegram chat IDs approved to use the bot. */
+  approvedUsers?: number[]
+  /** Telegram chat IDs awaiting an approval decision. */
+  pendingUsers?: number[]
+  /** Telegram chat IDs whose access requests are ignored. */
+  ignoredUsers?: number[]
+  /** Captured identity (name/@handle/timestamps) keyed by chat ID. */
+  userProfiles?: Record<string, UserProfile>
+  limits?: {
+    maxBotsPerTenant: number
+    aiPerDay: { chat: number; ask: number; fix: number }
+  }
 }
 
 const DEFAULT: StoredConfig = {
@@ -45,7 +57,17 @@ function readStored(): StoredConfig {
       github: { ...parsed.github },
       autoApprove: parsed.autoApprove ?? DEFAULT.autoApprove,
       autoUpdateEnabled: parsed.autoUpdateEnabled ?? DEFAULT.autoUpdateEnabled,
-      backgroundAgent: parsed.backgroundAgent ?? DEFAULT.backgroundAgent
+      backgroundAgent: parsed.backgroundAgent ?? DEFAULT.backgroundAgent,
+      // Access-control state — must be carried through, else every write after
+      // an approval silently erases the approved/pending/ignored lists.
+      approvedUsers: parsed.approvedUsers ?? [],
+      pendingUsers: parsed.pendingUsers ?? [],
+      ignoredUsers: parsed.ignoredUsers ?? [],
+      userProfiles: parsed.userProfiles ?? {},
+      limits: parsed.limits ?? {
+        maxBotsPerTenant: 5,
+        aiPerDay: { chat: 30, ask: 20, fix: 1 }
+      }
     }
   } catch {
     return structuredClone(DEFAULT)
@@ -374,4 +396,31 @@ export function ignoreUser(chatId: number): void {
 /** Remove a chat ID from the approved list and ignore future access requests. */
 export function rejectUser(chatId: number): void {
   ignoreUser(chatId)
+}
+
+// ---- tenancy: host identity & per-tenant limits ---------------------------
+
+export interface TenantLimits {
+  maxBotsPerTenant: number
+  aiPerDay: { chat: number; ask: number; fix: number }
+}
+
+/** The host/super-admin Telegram uid, derived from the control owner chat id. */
+export function getHostUid(): number | null {
+  const raw = getControlConfig().ownerChatId.trim()
+  if (!raw) return null
+  const n = Number(raw)
+  return Number.isFinite(n) ? n : null
+}
+
+export function getLimits(): TenantLimits {
+  const c = readStored()
+  return c.limits ?? { maxBotsPerTenant: 5, aiPerDay: { chat: 30, ask: 20, fix: 1 } }
+}
+
+export function setLimits(patch: Partial<TenantLimits>): void {
+  const c = readStored()
+  const cur = c.limits ?? { maxBotsPerTenant: 5, aiPerDay: { chat: 30, ask: 20, fix: 1 } }
+  c.limits = { ...cur, ...patch }
+  writeStored(c)
 }
