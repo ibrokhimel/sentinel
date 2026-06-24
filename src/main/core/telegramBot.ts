@@ -29,8 +29,11 @@ import {
   addPendingRequest,
   recordUserProfile,
   getGithubToken,
-  setGithubToken
+  setGithubToken,
+  getLimits
 } from './config'
+import { botsVisibleTo, can } from './miniapp/authz'
+import { findEntry, botsOwnedBy, setBotOwner } from './registry'
 import { ping, chatStream } from './agent/provider'
 import { runAgent, inferEnvSpec, type EnvVarSpec } from './agent/runtime'
 import { getHistory, appendTurn, clearMemory } from './agent/memory'
@@ -79,6 +82,12 @@ export function resolveBot(bots: Bot[], query: string): Bot | null {
     bots.find((b) => b.manifest.name.toLowerCase().includes(q)) ??
     null
   )
+}
+
+/** Filter a bot list to only those visible to the given uid. Host sees all. */
+export function filterVisible<T extends { manifest: { id: string } }>(bots: T[], uid: number, isHost: boolean): T[] {
+  const visible = new Set(botsVisibleTo(uid, isHost).map((e) => e.id))
+  return bots.filter((b) => visible.has(b.manifest.id))
 }
 
 export function statusEmoji(status: string): string {
@@ -359,6 +368,10 @@ export class TelegramControlBot {
     return this.running
   }
 
+  private async visibleBots(chatId: number, isOwner: boolean): Promise<Bot[]> {
+    return filterVisible(await sup.listBots(), chatId, isOwner)
+  }
+
   private async loop(): Promise<void> {
     while (this.running) {
       try {
@@ -522,8 +535,9 @@ export class TelegramControlBot {
 
     // Any non-command message is a direct chat with the AI ("talk straight").
     // A leading "ai" is optional and stripped, so `ai what's up` and `what's up`
-    // behave the same.
+    // behave the same. Tenants are directed to use /ask instead.
     if (!trimmed.startsWith('/')) {
+      if (!isOwner) { await this.send(chatId, '💬 Open your dashboard to chat, or use /ask <your bot> <question>.'); return }
       void this.runChat(chatId, trimmed.replace(/^ai[\s,:]+/i, ''))
       return
     }
@@ -535,41 +549,41 @@ export class TelegramControlBot {
         await this.send(chatId, HELP, mainMenuKeyboard())
         break
       case '/status': {
-        const bots = await sup.listBots()
+        const bots = await this.visibleBots(chatId, isOwner)
         await this.send(chatId, formatFleet(bots), mainMenuKeyboard())
         break
       }
       case '/list': {
-        const bots = await sup.listBots()
+        const bots = await this.visibleBots(chatId, isOwner)
         await this.send(chatId, '🤖 <b>Your bots</b> — tap one:', listKeyboard(bots))
         break
       }
       case '/stats':
-        void this.runStats(chatId)
+        void this.runStats(chatId, isOwner)
         break
       case '/logs': {
-        const bots = await sup.listBots()
+        const bots = await this.visibleBots(chatId, isOwner)
         const b = resolveBot(bots, arg)
         if (!b) await this.send(chatId, `No bot matches “${escapeHtml(arg)}”. Try /list.`)
         else await this.send(chatId, logsBlock(b))
         break
       }
       case '/update': {
-        const bots = await sup.listBots()
+        const bots = await this.visibleBots(chatId, isOwner)
         const b = resolveBot(bots, arg)
         if (!b) await this.send(chatId, `No bot matches “${escapeHtml(arg)}”. Try /list.`)
         else await this.runAction('update', b.manifest.id, chatId)
         break
       }
       case '/setenv': {
-        const bots = await sup.listBots()
+        const bots = await this.visibleBots(chatId, isOwner)
         const b = resolveBot(bots, arg)
         if (!b) await this.send(chatId, `No bot matches “${escapeHtml(arg)}”. Try /list.`)
         else await this.showSecrets(b.manifest.id, chatId)
         break
       }
       case '/setup': {
-        const bots = await sup.listBots()
+        const bots = await this.visibleBots(chatId, isOwner)
         const b = resolveBot(bots, arg)
         if (!b) await this.send(chatId, `No bot matches “${escapeHtml(arg)}”. Try /list.`)
         else void this.runEnvWizard(chatId, b.manifest.id) // detached so polling continues
@@ -582,9 +596,11 @@ export class TelegramControlBot {
         void this.runAgentSession(chatId, arg, true)
         break
       case '/ai':
+        if (!isOwner) { await this.send(chatId, '💬 Open your dashboard to chat, or use /ask <your bot> <question>.'); break }
         void this.runChat(chatId, arg)
         break
       case '/dev':
+        if (!isOwner) { await this.send(chatId, '🛠 Host-only command — manage your bots in the dashboard.'); break }
         void this.runSelfEdit(chatId, arg)
         break
       case '/reset': {
@@ -596,6 +612,7 @@ export class TelegramControlBot {
         break
       }
       case '/push': {
+        if (!isOwner) { await this.send(chatId, '🛠 Host-only command — manage your bots in the dashboard.'); break }
         const bots = await sup.listBots()
         const b = resolveBot(bots, arg) ?? (this.lastBot.get(chatId) ? bots.find((x) => x.manifest.id === this.lastBot.get(chatId)) : null) ?? (bots.length === 1 ? bots[0] : null)
         if (!b) await this.send(chatId, `Which bot? Try <code>/push &lt;name&gt;</code> or /list.`)
@@ -603,6 +620,7 @@ export class TelegramControlBot {
         break
       }
       case '/apply':
+        if (!isOwner) { await this.send(chatId, '🛠 Host-only command — manage your bots in the dashboard.'); break }
         void this.runApply(chatId, true)
         break
       case '/upload':
@@ -852,8 +870,8 @@ export class TelegramControlBot {
   }
 
   /** Fleet statistics: per-bot live CPU%, memory (+ % of RAM), uptime, and totals. */
-  private async runStats(chatId: number): Promise<void> {
-    const bots = await sup.listBots()
+  private async runStats(chatId: number, isOwner: boolean): Promise<void> {
+    const bots = filterVisible(await sup.listBots(), chatId, isOwner)
     if (!bots.length) {
       await this.send(chatId, 'No bots imported yet.')
       return
@@ -1135,7 +1153,8 @@ export class TelegramControlBot {
       await this.send(chatId, 'AI is not configured. Use /setai (or the app → Preferences → AI agent).')
       return
     }
-    const bots = await sup.listBots()
+    const isOwner = isAuthorized(chatId, this.getConfig().ownerChatId)
+    const bots = filterVisible(await sup.listBots(), chatId, isOwner)
     if (!bots.length) {
       await this.send(chatId, 'No bots imported yet.')
       return
@@ -1173,7 +1192,7 @@ export class TelegramControlBot {
       }
       question = q
     }
-    await this.runAgentForBot(chatId, bot, question, allowWrites)
+    await this.runAgentForBot(chatId, bot, question, allowWrites && can(chatId, isOwner, findEntry(bot.manifest.id), 'editEnv'))
   }
 
   /** Entry point for the 🤖 Ask AI / 🛠 Fix buttons — prompts for the request. */
@@ -1391,6 +1410,11 @@ export class TelegramControlBot {
   // ---- import a GitHub repo (public, or private with a token) ----
 
   private async runClone(chatId: number, url: string): Promise<void> {
+    const isOwner = isAuthorized(chatId, this.getConfig().ownerChatId)
+    if (!isOwner && botsOwnedBy(chatId).length >= getLimits().maxBotsPerTenant) {
+      await this.send(chatId, '🚫 Bot limit reached for your account.')
+      return
+    }
     if (this.busy.has(chatId)) {
       await this.send(chatId, 'A session is already running — /cancel first.')
       return
@@ -1402,6 +1426,7 @@ export class TelegramControlBot {
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
           const { bot, detect } = await sup.importBot({ type: 'git', source: url, token })
+          setBotOwner(bot.manifest.id, chatId)
           this.onChange?.()
           this.lastBot.set(chatId, bot.manifest.id)
           await this.send(
@@ -1544,6 +1569,7 @@ export class TelegramControlBot {
       }
       await this.send(chatId, `📦 Importing <b>${escapeHtml(name)}</b> as a new bot…`)
       const { bot, detect } = await sup.importBot({ type: 'local', source: src, name })
+      setBotOwner(bot.manifest.id, chatId)
       this.onChange?.()
       this.lastBot.set(chatId, bot.manifest.id)
       await this.send(
