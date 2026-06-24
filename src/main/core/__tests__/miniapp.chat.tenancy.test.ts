@@ -116,4 +116,11 @@ describe('chat tenancy', () => {
     expect(c.json).toHaveBeenCalledWith(404, expect.objectContaining({ error: 'not found' }))
     expect(SessionsMock.deleteSession).not.toHaveBeenCalled()
   })
+
+  // (d) confirm rejects an unknown/foreign token
+  it('POST /api/chat/confirm rejects an unknown/foreign token', async () => {
+    const c = ctx(7, false, { token: 'nope', approve: true })
+    await route('POST', '/api/chat/confirm').handler(c)
+    expect(c.json).toHaveBeenCalledWith(404, expect.objectContaining({ error: expect.any(String) }))
+  })
 })

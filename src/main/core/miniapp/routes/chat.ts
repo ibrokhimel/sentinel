@@ -29,8 +29,9 @@ function provider(): AgentProvider & { ready: boolean } {
  * Pending per-action confirmations, keyed by token. The agent loop awaits the
  * resolver while the phone is shown an Approve/Reject modal; POST /api/chat/confirm
  * (or client disconnect) settles it. Resolving false = "reject this action".
+ * Bound to the creating user's uid to prevent cross-tenant token reuse.
  */
-const pendingConfirms = new Map<string, (ok: boolean) => void>()
+const pendingConfirms = new Map<string, { settle: (ok: boolean) => void; userId: number }>()
 
 async function stream(c: RouteCtx): Promise<void> {
   const b = c.body as { id?: string; message?: string }
@@ -87,10 +88,10 @@ async function stream(c: RouteCtx): Promise<void> {
     if (res.writableEnded) return
     ac.abort()
     for (const token of myTokens) {
-      const resolve = pendingConfirms.get(token)
-      if (resolve) {
+      const entry = pendingConfirms.get(token)
+      if (entry) {
         pendingConfirms.delete(token)
-        resolve(false)
+        entry.settle(false)
       }
     }
     myTokens.clear()
@@ -146,7 +147,7 @@ async function stream(c: RouteCtx): Promise<void> {
                 }
                 // Safety net: never let a forgotten prompt block the loop forever.
                 const timer = setTimeout(() => settle(false), 120_000)
-                pendingConfirms.set(token, settle)
+                pendingConfirms.set(token, { settle, userId: c.auth.userId })
                 send({ type: 'confirm', token, summary })
               })
           : undefined
@@ -249,10 +250,10 @@ export const chatRoutes: Route[] = [
     handler: (c) => {
       const b = c.body as { token?: string; approve?: boolean }
       const token = String(b.token ?? '')
-      const resolve = pendingConfirms.get(token)
-      if (!resolve) return c.json(404, { error: 'unknown or expired token' })
+      const entry = pendingConfirms.get(token)
+      if (!entry || entry.userId !== c.auth.userId) return c.json(404, { error: 'unknown or expired token' })
       pendingConfirms.delete(token)
-      resolve(!!b.approve)
+      entry.settle(!!b.approve)
       c.json(200, { ok: true })
     }
   }
