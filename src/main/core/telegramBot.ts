@@ -651,7 +651,7 @@ export class TelegramControlBot {
         void this.runSetAi(chatId)
         break
       case '/remove': {
-        const bots = await sup.listBots()
+        const bots = await this.visibleBots(chatId, isOwner)
         const b = resolveBot(bots, arg)
         if (!b) await this.send(chatId, `No bot matches “${escapeHtml(arg)}”. Try /list.`)
         else
