@@ -24,6 +24,8 @@ import {
   isUserIgnored,
   approveUser,
   rejectUser,
+  addPendingRequest,
+  recordUserProfile,
   getGithubToken,
   setGithubToken
 } from './config'
@@ -32,6 +34,7 @@ import { runAgent, inferEnvSpec, type EnvVarSpec } from './agent/runtime'
 import { getHistory, appendTurn, clearMemory } from './agent/memory'
 import { exec } from './exec'
 import { procStat, systemBrief, type ProcStat } from './stats'
+import { muteBot } from './monitor'
 
 const SECRET_KEY_RE = /TOKEN|HASH|SECRET|PASSWORD|KEY|API_ID|SESSION/i
 
@@ -360,6 +363,17 @@ export class TelegramControlBot {
     const isApproved = isUserApproved(chatId)
     const isIgnored = isUserIgnored(chatId)
 
+    // Learn who this is (cheap upsert; only writes when names actually change),
+    // so the dashboard can show real names instead of bare numeric IDs.
+    if (msg.from) {
+      recordUserProfile({
+        id: chatId,
+        firstName: msg.from.first_name,
+        lastName: msg.from.last_name,
+        username: msg.from.username
+      })
+    }
+
     if (!isOwner && isIgnored) {
       // Admin chose Ignore/Reject. Stay quiet so ignored users cannot keep
       // generating access-request spam.
@@ -372,6 +386,13 @@ export class TelegramControlBot {
       if (trimmed.toLowerCase().startsWith('/start') || trimmed.toLowerCase().startsWith('/help')) {
         // Forward the access request to the owner with approve/reject buttons
         const user = msg.from
+        // Persist the request so it also shows in the Mini App access queue.
+        addPendingRequest({
+          id: chatId,
+          firstName: user?.first_name,
+          lastName: user?.last_name,
+          username: user?.username
+        })
         const firstName = user?.first_name ?? 'Unknown'
         const lastName = user?.last_name ?? ''
         const username = user?.username ? `@${user.username}` : 'none'
@@ -639,6 +660,13 @@ export class TelegramControlBot {
       const bots = await sup.listBots()
       const b = bots.find((x) => x.manifest.id === data.slice(5))
       if (b) await this.send(chatId, logsBlock(b))
+      return
+    }
+    if (data.startsWith('mute:')) {
+      const id = data.slice('mute:'.length)
+      muteBot(id, 60 * 60 * 1000)
+      await this.answer(cb.id, 'Muted for 1h')
+      if (messageId) await this.edit(chatId, messageId, `${cb.message?.text ?? 'Crash alert'}\n\n🔕 <b>Muted for 1h</b>`, null)
       return
     }
     if (data.startsWith('env:')) {

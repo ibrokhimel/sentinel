@@ -12,6 +12,7 @@ import { exec } from '../exec'
 import { botLogPaths } from '../paths'
 import { checkForUpdates } from '../git'
 import * as sup from '../supervisor'
+import { tailBotLogs } from '../telegramBot'
 import type { ToolSchema } from './provider'
 
 export interface ToolContext {
@@ -24,6 +25,8 @@ export interface Tool {
   mutating: boolean
   /** Needs a real managed bot (status/logs/env/launchd) — excluded in self-edit mode. */
   botScoped?: boolean
+  /** Cross-bot, read-only fleet tool (takes an explicit botId, not ctx.dir). */
+  fleet?: boolean
   summary?: (args: Record<string, unknown>) => string
   run: (args: Record<string, unknown>, ctx: ToolContext) => Promise<string>
 }
@@ -409,6 +412,83 @@ export const TOOLS: Record<string, Tool> = {
         log += s
       })
       return clip(log || 'Updated.')
+    }
+  },
+
+  // ---- Fleet (cross-bot, read-only) ----------------------------------------
+  // These take an explicit botId argument instead of operating on ctx.dir, so
+  // the Main/fleet session can inspect every managed bot at once.
+
+  list_bots: {
+    mutating: false,
+    fleet: true,
+    schema: {
+      type: 'function',
+      function: {
+        name: 'list_bots',
+        description: 'List every managed bot with its id, name, status, CPU%, memory (MB) and uptime.',
+        parameters: { type: 'object', properties: {} }
+      }
+    },
+    run: async () => {
+      const bots = await sup.listBots()
+      const rows = bots.map((b) => ({
+        id: b.manifest.id,
+        name: b.manifest.name,
+        status: b.runtime.status,
+        cpu: b.runtime.cpu,
+        memMB: b.runtime.memMB,
+        uptime: b.runtime.uptime,
+        pid: b.runtime.pid,
+        restarts: b.runtime.restarts
+      }))
+      return clip(JSON.stringify(rows, null, 2) || '(no bots)')
+    }
+  },
+
+  get_bot_status: {
+    mutating: false,
+    fleet: true,
+    schema: {
+      type: 'function',
+      function: {
+        name: 'get_bot_status',
+        description: 'Get the live runtime status of one bot by id (status, pid, restarts, cpu, memory, uptime, env readiness, framework).',
+        parameters: { type: 'object', properties: { botId: { type: 'string' } }, required: ['botId'] }
+      }
+    },
+    run: async (args) => {
+      const id = String(args.botId ?? '').trim()
+      if (!id) return 'Missing botId.'
+      try {
+        const b = await sup.getBot(id)
+        return JSON.stringify({ id: b.manifest.id, name: b.manifest.name, ...b.runtime, framework: b.manifest.framework }, null, 2)
+      } catch (e) {
+        return `Error: ${(e as Error).message}`
+      }
+    }
+  },
+
+  read_bot_logs: {
+    mutating: false,
+    fleet: true,
+    schema: {
+      type: 'function',
+      function: {
+        name: 'read_bot_logs',
+        description: "Read the last N lines of one bot's stdout+stderr logs, by bot id.",
+        parameters: {
+          type: 'object',
+          properties: { botId: { type: 'string' }, n: { type: 'number' } },
+          required: ['botId']
+        }
+      }
+    },
+    run: async (args) => {
+      const id = String(args.botId ?? '').trim()
+      if (!id) return 'Missing botId.'
+      const n = Math.min(200, Math.max(1, Number(args.n) || 30))
+      return clip(tailBotLogs(id, n) || '(no logs yet)')
     }
   }
 }

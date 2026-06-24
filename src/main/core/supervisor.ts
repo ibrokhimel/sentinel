@@ -35,10 +35,11 @@ import {
   resetHard
 } from './git'
 import { getGithubToken } from './config'
+import { getUpdatesBehind } from './updates'
 import { interpreterPath, setupEnv, venvReady } from './venv'
 import { miniAppWrapperSpec, nodeDepsReady, setupNode, writeMiniAppWrapper } from './node'
 import { readEnvExample, readEnvFile, writeEnvFile } from './env'
-import { procStat } from './stats'
+import { procStat, cputimeToSec } from './stats'
 import * as launchctl from './launchctl'
 import { resolveArgv } from './launchspec'
 import { basename } from 'node:path'
@@ -99,7 +100,10 @@ async function runtimeOf(id: string, dir: string, manifest: BotManifest): Promis
     memMB: st.memMB,
     memPct: st.memPct,
     uptime: st.uptime,
-    updatesBehind: null
+    uptimeSec: st.uptime ? cputimeToSec(st.uptime) : null,
+    // Read-only: the monitor refreshes this cache on a throttled cadence so the
+    // hot listBots path never hits the network here.
+    updatesBehind: getUpdatesBehind(id)
   }
 }
 

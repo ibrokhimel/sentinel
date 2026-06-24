@@ -24,6 +24,12 @@ import { ROUTES, type RouteCtx } from './routes/index'
 import { resolveBinSync } from '../node'
 import { notifyOwner } from '../notify'
 import { MINIAPP_HTML } from './frontend'
+import { createHash } from 'node:crypto'
+
+/** Content hash of the served HTML — appended to the menu-button URL as `?v=`
+ *  so Telegram's WebView treats a rebuilt dashboard as a new URL and reloads
+ *  it instead of serving a stale cached copy. */
+const BUILD_VER = createHash('sha256').update(MINIAPP_HTML).digest('hex').slice(0, 10)
 
 /** Local port the dashboard listens on. Picked to avoid the 3000/3001 range
  *  that managed Mini Apps default to. */
@@ -104,7 +110,7 @@ export class MiniAppService {
       if (m && !this.url) {
         this.url = m[0]
         console.log(`[miniapp] tunnel up: ${this.url}`)
-        void this.registerMenuButton(token, this.url)
+        void this.registerMenuButton(token, this.url + '?v=' + BUILD_VER)
       }
     }
     child.stdout?.on('data', onLine)
@@ -141,7 +147,7 @@ export class MiniAppService {
       const path = url.pathname
 
       if (req.method === 'GET' && (path === '/' || path === '/index.html')) {
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' })
         res.end(MINIAPP_HTML)
         return
       }

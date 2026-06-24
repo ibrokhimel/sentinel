@@ -141,6 +141,8 @@ export interface BotRuntime {
   memPct?: number | null
   /** Process uptime, e.g. "02:59" or "1-03:04:05". */
   uptime?: string | null
+  /** Process uptime in whole seconds (numeric anchor for live UI tickers). */
+  uptimeSec?: number | null
 }
 
 export interface Bot {
@@ -238,6 +240,19 @@ export interface AppConfig {
   backgroundAgent: boolean
   /** Whether a GitHub token is stored (for pushing to e.g. sentinel-live). */
   hasGithubToken: boolean
+}
+
+/** A Telegram user known to Sentinel — captured at access-request time and
+ *  carried through approval so the dashboard can show names, not bare IDs. */
+export interface UserProfile {
+  id: number
+  firstName?: string
+  lastName?: string
+  username?: string
+  /** ms epoch of first access request. */
+  requestedAt?: number
+  /** ms epoch when the owner approved (undefined while pending/ignored). */
+  approvedAt?: number
 }
 
 /** Result of checking a bot's git remote for new commits. */

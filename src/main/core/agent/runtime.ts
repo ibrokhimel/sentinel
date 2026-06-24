@@ -23,8 +23,11 @@ export interface RunAgentOpts {
   dir: string
   task: string
   allowWrites: boolean
-  /** 'self' = editing Sentinel's own source (uses only dir-based file/command tools). */
-  scope?: 'bot' | 'self'
+  /**
+   * 'self'  = editing Sentinel's own source (uses only dir-based file/command tools).
+   * 'fleet' = the Main session, read-only across ALL bots (list/status/logs).
+   */
+  scope?: 'bot' | 'self' | 'fleet'
   maxSteps?: number
   events?: AgentEvents
   /** Prior conversation turns (clean user/assistant text) for continuity. */
@@ -33,7 +36,15 @@ export interface RunAgentOpts {
   signal?: AbortSignal
 }
 
-function systemPrompt(allowWrites: boolean, scope: 'bot' | 'self'): string {
+function systemPrompt(allowWrites: boolean, scope: 'bot' | 'self' | 'fleet'): string {
+  if (scope === 'fleet') {
+    return [
+      "You are Sentinel's fleet operator. You manage multiple Python Telegram bots.",
+      'Use list_bots / get_bot_status / read_bot_logs to inspect them and answer the user’s question with specifics (names, statuses, CPU/memory, recent log lines).',
+      'You cannot run shell or edit code here — this is a read-only fleet overview. For per-bot fixes, the user opens that bot’s own chat.',
+      'Be concise and concrete. When done, give a short final summary with no tool call.'
+    ].join('\n')
+  }
   if (scope === 'self') {
     return [
       'You are Sentinel editing its OWN source code — an Electron + React + TypeScript app. Layout: main process in src/main (core logic in src/main/core), renderer in src/renderer, shared types in src/shared. Tests are vitest; build is electron-vite.',
@@ -59,9 +70,14 @@ function systemPrompt(allowWrites: boolean, scope: 'bot' | 'self'): string {
 export async function runAgent(o: RunAgentOpts): Promise<string> {
   const ctx = { botId: o.botId, dir: o.dir }
   const scope = o.scope ?? 'bot'
-  // Allowed tools: drop mutating ones unless writes are allowed, and drop
-  // bot-specific ones entirely when editing Sentinel's own source.
+  // Allowed tools, by scope:
+  //   'fleet' → ONLY the cross-bot read-only fleet tools.
+  //   'self'  → drop bot-specific (launchd/env) tools; no fleet tools.
+  //   'bot'   → the per-bot toolbox; no fleet tools.
+  // In every non-fleet scope, drop mutating tools unless writes are allowed.
   const allowed = Object.values(TOOLS).filter((t) => {
+    if (scope === 'fleet') return !!t.fleet
+    if (t.fleet) return false
     if (scope === 'self' && t.botScoped) return false
     return o.allowWrites || !t.mutating
   })

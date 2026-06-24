@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { AppConfig } from '@shared/types'
+import type { AppConfig, UserProfile } from '@shared/types'
 import { SENTINEL_HOME, ensureDirs } from './paths'
 
 const CONFIG_PATH = join(SENTINEL_HOME, 'config.json')
@@ -251,7 +251,90 @@ export function approveUser(chatId: number): void {
     ignored.splice(ignoredIdx, 1)
     ;(c as any).ignoredUsers = ignored
   }
+
+  // Clear from the pending queue and stamp the approval time on the profile.
+  const pending: number[] = (c as any).pendingUsers ?? []
+  const pIdx = pending.indexOf(chatId)
+  if (pIdx !== -1) {
+    pending.splice(pIdx, 1)
+    ;(c as any).pendingUsers = pending
+  }
+  const profiles: Record<string, UserProfile> = (c as any).userProfiles ?? {}
+  if (profiles[chatId]) profiles[chatId].approvedAt = Date.now()
+  else profiles[chatId] = { id: chatId, approvedAt: Date.now() }
+  ;(c as any).userProfiles = profiles
   writeStored(c)
+}
+
+// ---- user profiles + pending access queue --------------------------------
+
+/** Read a known user's captured profile (names/handle), or a bare {id}. */
+export function getUserProfile(chatId: number): UserProfile {
+  const c = readStored()
+  const profiles: Record<string, UserProfile> = (c as any).userProfiles ?? {}
+  return profiles[chatId] ?? { id: chatId }
+}
+
+/** Upsert the identity fields we learn from a Telegram message. Only writes
+ *  when something actually changed (keeps message handling cheap). */
+export function recordUserProfile(p: {
+  id: number
+  firstName?: string
+  lastName?: string
+  username?: string
+}): void {
+  const c = readStored()
+  const profiles: Record<string, UserProfile> = (c as any).userProfiles ?? {}
+  const cur = profiles[p.id] ?? { id: p.id }
+  const next: UserProfile = {
+    ...cur,
+    id: p.id,
+    firstName: p.firstName ?? cur.firstName,
+    lastName: p.lastName ?? cur.lastName,
+    username: p.username ?? cur.username
+  }
+  if (JSON.stringify(next) === JSON.stringify(cur)) return
+  profiles[p.id] = next
+  ;(c as any).userProfiles = profiles
+  writeStored(c)
+}
+
+/** Record a pending access request (captures identity, queues for approval).
+ *  No-op if the user is already approved. */
+export function addPendingRequest(p: {
+  id: number
+  firstName?: string
+  lastName?: string
+  username?: string
+}): void {
+  if (isUserApproved(p.id)) return
+  recordUserProfile(p)
+  const c = readStored()
+  const pending: number[] = (c as any).pendingUsers ?? []
+  if (!pending.includes(p.id)) pending.push(p.id)
+  ;(c as any).pendingUsers = pending
+  const profiles: Record<string, UserProfile> = (c as any).userProfiles ?? {}
+  if (profiles[p.id] && profiles[p.id].requestedAt == null) {
+    profiles[p.id].requestedAt = Date.now()
+    ;(c as any).userProfiles = profiles
+  }
+  writeStored(c)
+}
+
+/** Profiles of everyone awaiting an approval decision. */
+export function getPendingRequests(): UserProfile[] {
+  const c = readStored()
+  const pending: number[] = (c as any).pendingUsers ?? []
+  const profiles: Record<string, UserProfile> = (c as any).userProfiles ?? {}
+  return pending.map((id) => profiles[id] ?? { id })
+}
+
+/** Approved users as full profiles (names/handle), newest approvals first. */
+export function getApprovedProfiles(): UserProfile[] {
+  const profiles = (readStored() as any).userProfiles as Record<string, UserProfile> | undefined
+  return getApprovedUsers()
+    .map((id) => (profiles && profiles[id]) || { id })
+    .sort((a, b) => (b.approvedAt ?? 0) - (a.approvedAt ?? 0))
 }
 
 /** List of Telegram chat IDs whose access requests should be ignored. */
@@ -277,6 +360,13 @@ export function ignoreUser(chatId: number): void {
   if (idx !== -1) {
     approved.splice(idx, 1)
     ;(c as any).approvedUsers = approved
+  }
+
+  const pending: number[] = (c as any).pendingUsers ?? []
+  const pIdx = pending.indexOf(chatId)
+  if (pIdx !== -1) {
+    pending.splice(pIdx, 1)
+    ;(c as any).pendingUsers = pending
   }
   writeStored(c)
 }

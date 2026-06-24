@@ -3,14 +3,17 @@
  * agent backend the desktop app uses. Session CRUD is plain JSON; /stream emits
  * a Server-Sent-Events feed so the phone UI can render tokens as they arrive.
  *
- * Two modes (v1):
- *   - 'chat' (Main): free-form streaming completion via chatStream.
- *   - 'ask'  (per-bot): read-only agent run (allowWrites:false) over a bot dir,
- *     surfacing the agent's text + tool activity as events.
+ * Two modes:
+ *   - 'chat' (Main): a read-only FLEET agent run — answers cross-bot questions
+ *     with specifics (list_bots / get_bot_status / read_bot_logs).
+ *   - 'ask'  (per-bot): an agent run over one bot dir. Read-only for non-owners;
+ *     for the owner it can ACT — immediately when YOLO (autoApprove) is on, or
+ *     with a per-action confirmation prompt on the phone when it isn't.
  */
+import { randomUUID } from 'node:crypto'
 import * as sup from '../../supervisor'
-import { getAgentConfig } from '../../config'
-import { chatStream, type AgentProvider, type ChatMessage } from '../../agent/provider'
+import { getAgentConfig, getAppConfig } from '../../config'
+import { type AgentProvider, type ChatMessage } from '../../agent/provider'
 import { runAgent } from '../../agent/runtime'
 import * as S from '../sessions'
 import type { Route, RouteCtx } from './index'
@@ -19,6 +22,13 @@ function provider(): AgentProvider & { ready: boolean } {
   const a = getAgentConfig()
   return { baseUrl: a.baseUrl, apiKey: a.apiKey, model: a.model, ready: a.ready }
 }
+
+/**
+ * Pending per-action confirmations, keyed by token. The agent loop awaits the
+ * resolver while the phone is shown an Approve/Reject modal; POST /api/chat/confirm
+ * (or client disconnect) settles it. Resolving false = "reject this action".
+ */
+const pendingConfirms = new Map<string, (ok: boolean) => void>()
 
 async function stream(c: RouteCtx): Promise<void> {
   const b = c.body as { id?: string; message?: string }
@@ -46,25 +56,75 @@ async function stream(c: RouteCtx): Promise<void> {
   }
   const prov: AgentProvider = { baseUrl: p.baseUrl, apiKey: p.apiKey, model: p.model }
   const ac = new AbortController()
-  c.req.on('close', () => ac.abort())
+  // Tokens of confirmations issued for THIS request, so a client disconnect can
+  // resolve them false (reject) and never hang the agent loop past the stream.
+  const myTokens = new Set<string>()
+  c.req.on('close', () => {
+    ac.abort()
+    for (const token of myTokens) {
+      const resolve = pendingConfirms.get(token)
+      if (resolve) {
+        pendingConfirms.delete(token)
+        resolve(false)
+      }
+    }
+    myTokens.clear()
+  })
   let finalText = ''
   try {
     const history: ChatMessage[] = sess.messages.map((m) => ({ role: m.role, content: m.content }))
     if (sess.mode === 'chat') {
-      finalText = await chatStream(
-        prov,
-        [...history, { role: 'user', content: msg }],
-        (full) => send({ type: 'delta', text: full }),
-        ac.signal
-      )
+      // Main session: read-only fleet operator — answers cross-bot questions
+      // with specifics instead of a generic refusal.
+      send({ type: 'mode', allowWrites: false })
+      finalText = await runAgent({
+        provider: prov,
+        botId: '',
+        dir: '',
+        task: msg,
+        allowWrites: false,
+        scope: 'fleet',
+        history,
+        signal: ac.signal,
+        events: { onText: (t) => send({ type: 'delta', text: t }) }
+      })
     } else {
       const bot = await sup.getBot(sess.botId as string)
+      // Gating for the per-bot manager:
+      //   non-owner            → read-only (allowWrites:false).
+      //   owner + YOLO         → allowWrites:true, no confirm handler → acts now.
+      //   owner + !YOLO        → allowWrites:true WITH a per-action confirm that
+      //                          asks the phone before each mutating tool runs.
+      const allowWrites = c.auth.isOwner
+      const yolo = getAppConfig().autoApprove
+      send({ type: 'mode', allowWrites })
+      const confirm =
+        c.auth.isOwner && !yolo
+          ? (summary: string): Promise<boolean> =>
+              new Promise<boolean>((resolve) => {
+                const token = randomUUID()
+                myTokens.add(token)
+                let settled = false
+                const settle = (ok: boolean): void => {
+                  if (settled) return
+                  settled = true
+                  clearTimeout(timer)
+                  pendingConfirms.delete(token)
+                  myTokens.delete(token)
+                  resolve(ok)
+                }
+                // Safety net: never let a forgotten prompt block the loop forever.
+                const timer = setTimeout(() => settle(false), 120_000)
+                pendingConfirms.set(token, settle)
+                send({ type: 'confirm', token, summary })
+              })
+          : undefined
       finalText = await runAgent({
         provider: prov,
         botId: bot.manifest.id,
         dir: bot.dir,
         task: msg,
-        allowWrites: false,
+        allowWrites,
         scope: 'bot',
         history,
         signal: ac.signal,
@@ -72,7 +132,8 @@ async function stream(c: RouteCtx): Promise<void> {
           onText: (t) => send({ type: 'delta', text: t }),
           onTool: (name, args) => send({ type: 'tool', name, args }),
           onToolResult: (name, result) =>
-            send({ type: 'tool_result', name, result: String(result).slice(0, 4000) })
+            send({ type: 'tool_result', name, result: String(result).slice(0, 4000) }),
+          ...(confirm ? { confirm } : {})
         }
       })
     }
@@ -133,5 +194,19 @@ export const chatRoutes: Route[] = [
       c.json(s ? 200 : 404, s ? { session: s } : { error: 'not found' })
     }
   },
-  { method: 'POST', path: '/api/chat/stream', ownerOnly: true, handler: stream }
+  { method: 'POST', path: '/api/chat/stream', ownerOnly: true, handler: stream },
+  {
+    method: 'POST',
+    path: '/api/chat/confirm',
+    ownerOnly: true,
+    handler: (c) => {
+      const b = c.body as { token?: string; approve?: boolean }
+      const token = String(b.token ?? '')
+      const resolve = pendingConfirms.get(token)
+      if (!resolve) return c.json(404, { error: 'unknown or expired token' })
+      pendingConfirms.delete(token)
+      resolve(!!b.approve)
+      c.json(200, { ok: true })
+    }
+  }
 ]
