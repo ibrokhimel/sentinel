@@ -31,14 +31,26 @@ async function push(c: RouteCtx): Promise<void> {
 
 function apply(c: RouteCtx): void {
   const home = process.env.SENTINEL_HOME || process.cwd()
-  const child = spawn('/bin/bash', ['-lc', 'npm run typecheck && npm run build'], {
-    cwd: home,
-    stdio: 'pipe',
-  })
+  let done = false
+  let child: ReturnType<typeof spawn>
+  try {
+    child = spawn('/bin/bash', ['-lc', 'npm run typecheck && npm run build'], {
+      cwd: home,
+      stdio: 'pipe',
+    })
+  } catch (e) {
+    c.json(500, { error: String((e as Error)?.message ?? e) })
+    return
+  }
   let out = ''
-  child.stdout.on('data', (d: Buffer) => { out += d.toString() })
-  child.stderr.on('data', (d: Buffer) => { out += d.toString() })
+  child.stdout?.on('data', (d: Buffer) => { out += d.toString() })
+  child.stderr?.on('data', (d: Buffer) => { out += d.toString() })
+  child.on('error', (e: Error) => {
+    if (done) return; done = true
+    c.json(500, { error: String(e?.message ?? e) })
+  })
   child.on('exit', (code: number | null) => {
+    if (done) return; done = true
     if (code === 0) {
       c.json(200, { ok: true })
     } else {
