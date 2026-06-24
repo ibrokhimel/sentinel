@@ -26,7 +26,18 @@ async function importBot(c: RouteCtx): Promise<void> {
   }
   try {
     const { bot } = await sup.importBot({ type: 'git', source: url })
-    setBotOwner(bot.manifest.id, c.auth.userId) // stamp the importing tenant as owner
+    try {
+      setBotOwner(bot.manifest.id, c.auth.userId)
+    } catch (stampErr) {
+      // Stamp failed — don't leave an orphaned, unowned bot behind.
+      try {
+        await sup.removeBot(bot.manifest.id)
+      } catch {
+        /* best-effort cleanup */
+      }
+      c.json(500, { error: 'import failed to record ownership' })
+      return
+    }
     c.json(200, { ok: true, id: bot.manifest.id })
   } catch (e) {
     c.json(500, { error: String((e as Error)?.message ?? e) })

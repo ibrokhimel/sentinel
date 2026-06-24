@@ -15,6 +15,8 @@ vi.mock('../registry', () => ({
 vi.mock('../config', () => ({ getLimits: () => ({ maxBotsPerTenant: 2, aiPerDay: { chat: 1, ask: 1, fix: 1 } }) }))
 
 import { botRoutes } from '../miniapp/routes/bots'
+import * as sup from '../supervisor'
+import * as reg from '../registry'
 
 function run(path: string, body: unknown, auth: { userId: number; isOwner: boolean }) {
   const json = vi.fn()
@@ -36,11 +38,29 @@ describe('bots tenancy', () => {
     const { p, json } = run('/api/bots/import', { url: 'https://x/y.git' }, { userId: 7, isOwner: false })
     await p
     expect(json).toHaveBeenCalledWith(200, expect.objectContaining({ ok: true, id: 'newbot' }))
+    expect(reg.setBotOwner).toHaveBeenCalledWith('newbot', 7)
   })
 
   it('forbids removing a bot the tenant does not own', async () => {
     const { p, json } = run('/api/bots/remove', { id: 'notmine', confirm: true }, { userId: 7, isOwner: false })
     await p
     expect(json).toHaveBeenCalledWith(403, expect.objectContaining({ error: expect.any(String) }))
+  })
+
+  it('bypasses tenant quota for host import', async () => {
+    owned.mockReturnValue([{}, {}]) // 2 == maxBotsPerTenant (at limit)
+    const { p, json } = run('/api/bots/import', { url: 'https://x/y.git' }, { userId: 1, isOwner: true })
+    await p
+    expect(json).toHaveBeenCalledWith(200, expect.objectContaining({ ok: true, id: 'newbot' }))
+  })
+
+  it('cleans up orphaned bot if stamp fails', async () => {
+    ;(reg.setBotOwner as any).mockImplementationOnce(() => {
+      throw new Error('disk')
+    })
+    const { p, json } = run('/api/bots/import', { url: 'https://x/y.git' }, { userId: 7, isOwner: false })
+    await p
+    expect(json).toHaveBeenCalledWith(500, expect.objectContaining({ error: expect.stringMatching(/ownership/) }))
+    expect(sup.removeBot).toHaveBeenCalledWith('newbot')
   })
 })
