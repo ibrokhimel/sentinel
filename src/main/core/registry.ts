@@ -3,21 +3,48 @@ import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import type { BotManifest } from '@shared/types'
 import { REGISTRY_PATH, BOTS_DIR, ensureDirs } from './paths'
+import { getHostUid } from './config'
+
+export interface Capabilities {
+  viewLogs?: boolean
+  chat?: boolean
+  startStop?: boolean
+  deploy?: boolean
+  editEnv?: boolean
+  viewSecrets?: boolean
+}
 
 export interface RegistryEntry {
   id: string
   name: string
   /** Directory name under bots/. */
   dirName: string
+  /** Telegram uid of the owning tenant (host on migration). */
+  ownerId?: number
+  /** uid → granular per-bot capabilities (Phase 2 populates this). */
+  collaborators?: Record<string, Capabilities>
 }
 
 export function readRegistry(): RegistryEntry[] {
   if (!existsSync(REGISTRY_PATH)) return []
+  let entries: RegistryEntry[]
   try {
-    return JSON.parse(readFileSync(REGISTRY_PATH, 'utf8')) as RegistryEntry[]
+    entries = JSON.parse(readFileSync(REGISTRY_PATH, 'utf8')) as RegistryEntry[]
   } catch {
     return []
   }
+  const host = getHostUid()
+  let changed = false
+  if (host !== null) {
+    for (const e of entries) {
+      if (e.ownerId == null) {
+        e.ownerId = host
+        changed = true
+      }
+    }
+  }
+  if (changed) writeRegistry(entries)
+  return entries
 }
 
 export function writeRegistry(entries: RegistryEntry[]): void {
@@ -37,6 +64,18 @@ export function removeFromRegistry(id: string): void {
 
 export function findEntry(id: string): RegistryEntry | undefined {
   return readRegistry().find((e) => e.id === id)
+}
+
+export function setBotOwner(id: string, ownerId: number): void {
+  const entries = readRegistry()
+  const e = entries.find((x) => x.id === id)
+  if (!e) return
+  e.ownerId = ownerId
+  writeRegistry(entries)
+}
+
+export function botsOwnedBy(uid: number): RegistryEntry[] {
+  return readRegistry().filter((e) => e.ownerId === uid)
 }
 
 // ---- manifests ----
