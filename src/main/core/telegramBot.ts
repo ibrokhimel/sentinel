@@ -1147,6 +1147,11 @@ export class TelegramControlBot {
       )
       return
     }
+    const meter = checkAndCountAi(chatId, isOwner, aiKindFor(allowWrites))
+    if (!meter.ok) {
+      await this.send(chatId, '🚦 Daily AI limit reached — resets tomorrow.')
+      return
+    }
     if (!question) {
       const q = await this.askValue(
         chatId,
@@ -1157,11 +1162,6 @@ export class TelegramControlBot {
         return
       }
       question = q
-    }
-    const meter = checkAndCountAi(chatId, isOwner, aiKindFor(allowWrites))
-    if (!meter.ok) {
-      await this.send(chatId, '🚦 Daily AI limit reached — resets tomorrow.')
-      return
     }
     await this.runAgentForBot(chatId, bot, question, allowWrites && can(chatId, isOwner, findEntry(bot.manifest.id), 'editEnv'))
   }
