@@ -28,7 +28,8 @@ import {
   recordUserProfile,
   getGithubToken,
   setGithubToken,
-  getLimits
+  getLimits,
+  checkAndCountAi
 } from './config'
 import { can } from './miniapp/authz'
 import { findEntry, botsOwnedBy, setBotOwner } from './registry'
@@ -199,6 +200,10 @@ function envKeyboard(botId: string, keys: string[], current: Record<string, stri
 /** Never reveal a secret's content — show only a length hint. */
 export function maskSecret(v: string): string {
   return `•••• (${v.length} chars)`
+}
+
+export function aiKindFor(allowWrites: boolean): 'ask' | 'fix' {
+  return allowWrites ? 'fix' : 'ask'
 }
 
 /** Two-step guard for the only destructive action. */
@@ -1153,6 +1158,11 @@ export class TelegramControlBot {
       }
       question = q
     }
+    const meter = checkAndCountAi(chatId, isOwner, aiKindFor(allowWrites))
+    if (!meter.ok) {
+      await this.send(chatId, '🚦 Daily AI limit reached — resets tomorrow.')
+      return
+    }
     await this.runAgentForBot(chatId, bot, question, allowWrites && can(chatId, isOwner, findEntry(bot.manifest.id), 'editEnv'))
   }
 
@@ -1173,6 +1183,11 @@ export class TelegramControlBot {
     this.lastBot.set(chatId, botId)
     if (!getAgentConfig().ready) {
       await this.send(chatId, 'AI is not configured. Use /setai (or the app → Preferences → AI agent).')
+      return
+    }
+    const meter = checkAndCountAi(chatId, isOwner, aiKindFor(allowWrites))
+    if (!meter.ok) {
+      await this.send(chatId, '🚦 Daily AI limit reached — resets tomorrow.')
       return
     }
     const q = await this.askValue(
