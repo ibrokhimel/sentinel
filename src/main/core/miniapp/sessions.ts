@@ -26,6 +26,7 @@ export interface ChatSession {
   messages: { role: 'user' | 'assistant'; content: string; ts: number }[]
   createdAt: number
   updatedAt: number
+  ownerId?: number
 }
 
 export const MAIN_ID = 'main'
@@ -56,9 +57,26 @@ function save(s: Store): void {
   writeFileSync(f, JSON.stringify(s))
 }
 
-export function listSessions(botId?: string | null): ChatSession[] {
-  const all = Object.values(load())
-  const f = botId === undefined ? all : all.filter((x) => x.botId === botId || x.id === MAIN_ID)
+/** Returns the per-tenant main session id. Each uid gets their own main chat. */
+export function mainIdFor(uid: number): string {
+  return 'main:' + uid
+}
+
+/**
+ * Returns the session only if it belongs to `uid`.
+ * Returns null for cross-tenant access attempts.
+ */
+export function getSessionFor(uid: number, id: string): ChatSession | null {
+  const s = load()[id] ?? null
+  if (!s) return null
+  if (s.ownerId != null && s.ownerId !== uid) return null
+  return s
+}
+
+/** List all sessions owned by `uid`, optionally filtered by botId. */
+export function listSessions(uid: number, botId?: string | null): ChatSession[] {
+  const all = Object.values(load()).filter((x) => x.ownerId === uid)
+  const f = botId === undefined ? all : all.filter((x) => x.botId === botId)
   return f.sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
@@ -66,7 +84,7 @@ export function getSession(id: string): ChatSession | null {
   return load()[id] ?? null
 }
 
-export function createSession(o: { botId: string | null; mode: 'chat' | 'ask'; title?: string }): ChatSession {
+export function createSession(o: { ownerId: number; botId: string | null; mode: 'chat' | 'ask'; title?: string }): ChatSession {
   const s = load()
   const t = Date.now()
   const sess: ChatSession = {
@@ -76,7 +94,8 @@ export function createSession(o: { botId: string | null; mode: 'chat' | 'ask'; t
     mode: o.mode,
     messages: [],
     createdAt: t,
-    updatedAt: t
+    updatedAt: t,
+    ownerId: o.ownerId
   }
   s[sess.id] = sess
   save(s)

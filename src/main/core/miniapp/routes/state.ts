@@ -1,21 +1,25 @@
 import * as sup from '../../supervisor'
 import { getAppConfig, setAutoApprove, setAutoUpdateEnabled, setNotifyConfig, setAgentConfig } from '../../config'
 import { tailBotLogs } from '../../telegramBot'
+import { botsVisibleTo, assertCap } from '../authz'
 import type { Route, RouteCtx } from './index'
 
 export const SECRET_KEY_RE = /TOKEN|HASH|SECRET|PASSWORD|KEY|API_ID|SESSION/i
 
 async function getState(c: RouteCtx): Promise<void> {
-  const bots = await sup.listBots()
-  c.json(200, { bots, config: getAppConfig(), owner: c.auth.isOwner })
+  const visible = new Set(botsVisibleTo(c.auth.userId, c.auth.isOwner).map((e) => e.id))
+  const bots = (await sup.listBots()).filter((b) => visible.has(b.manifest.id))
+  c.json(200, { bots, config: c.auth.isOwner ? getAppConfig() : null, owner: c.auth.isOwner })
 }
-function getLogs(c: RouteCtx): void {
+async function getLogs(c: RouteCtx): Promise<void> {
   const id = c.url.searchParams.get('id') ?? ''
+  assertCap(c.auth.userId, c.auth.isOwner, id, 'viewLogs')
   const n = Math.min(200, Math.max(10, Number(c.url.searchParams.get('n')) || 60))
   c.json(200, { text: tailBotLogs(id, n) })
 }
 function getEnv(c: RouteCtx): void {
   const id = c.url.searchParams.get('id') ?? ''
+  assertCap(c.auth.userId, c.auth.isOwner, id, 'editEnv')
   const env = sup.getEnv(id)
   const current: Record<string, string> = {}
   const secretKeys: string[] = []
@@ -31,6 +35,7 @@ function getEnv(c: RouteCtx): void {
 async function postAction(c: RouteCtx): Promise<void> {
   const b = c.body as { id?: string; action?: string }
   const id = String(b.id ?? '')
+  assertCap(c.auth.userId, c.auth.isOwner, id, 'startStop')
   switch (b.action) {
     case 'start': await sup.start(id); break
     case 'stop': await sup.stop(id); break
@@ -44,6 +49,7 @@ async function postAction(c: RouteCtx): Promise<void> {
 async function postEnv(c: RouteCtx): Promise<void> {
   const b = c.body as { id?: string; values?: Record<string, string> }
   const id = String(b.id ?? '')
+  assertCap(c.auth.userId, c.auth.isOwner, id, 'editEnv')
   const incoming = b.values ?? {}
   const existing = sup.getEnv(id).current
   const merged: Record<string, string> = { ...existing }
@@ -73,7 +79,7 @@ export const stateRoutes: Route[] = [
   { method: 'GET', path: '/api/state', ownerOnly: false, handler: getState },
   { method: 'GET', path: '/api/logs', ownerOnly: false, handler: getLogs },
   { method: 'GET', path: '/api/env', ownerOnly: false, handler: getEnv },
-  { method: 'POST', path: '/api/action', ownerOnly: true, handler: postAction },
-  { method: 'POST', path: '/api/env', ownerOnly: true, handler: postEnv },
+  { method: 'POST', path: '/api/action', ownerOnly: false, handler: postAction },
+  { method: 'POST', path: '/api/env', ownerOnly: false, handler: postEnv },
   { method: 'POST', path: '/api/settings', ownerOnly: true, handler: postSettings }
 ]

@@ -6,7 +6,7 @@ function route(method: string, path: string) {
 }
 
 describe('chat routes', () => {
-  it('registers session CRUD + stream, all owner-only', () => {
+  it('registers session CRUD + stream routes', () => {
     for (const p of [
       '/api/chat/sessions',
       '/api/chat/sessions/rename',
@@ -15,7 +15,8 @@ describe('chat routes', () => {
       '/api/chat/stream'
     ])
       expect(chatRoutes.some((r) => r.path === p)).toBe(true)
-    expect(route('POST', '/api/chat/stream').ownerOnly).toBe(true)
+    // stream is now ownerOnly:false — ownership enforced inside the handler
+    expect(route('POST', '/api/chat/stream').ownerOnly).toBe(false)
   })
   it('GET sessions returns Main', async () => {
     const json = vi.fn()

@@ -17,8 +17,9 @@ describe('sessions store', () => {
   })
   it('creates, lists by bot, renames, resets, appends with caps', async () => {
     const s = await import('../miniapp/sessions')
-    const a = s.createSession({ botId: 'bot1', mode: 'ask', title: 'Investigate' })
-    expect(s.listSessions('bot1').map((x) => x.id)).toContain(a.id)
+    // Pass ownerId (new required field); list by uid + botId filter
+    const a = s.createSession({ ownerId: 1, botId: 'bot1', mode: 'ask', title: 'Investigate' })
+    expect(s.listSessions(1, 'bot1').map((x) => x.id)).toContain(a.id)
     expect(s.renameSession(a.id, 'Renamed')?.title).toBe('Renamed')
     for (let i = 0; i < 40; i++) s.appendTurn(a.id, 'u' + i, 'a' + i)
     expect(s.getSession(a.id)!.messages.length).toBeLessThanOrEqual(32)
