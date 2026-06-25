@@ -30,7 +30,7 @@ import {
   setGithubToken,
   getLimits
 } from './config'
-import { botsVisibleTo, can } from './miniapp/authz'
+import { can } from './miniapp/authz'
 import { findEntry, botsOwnedBy, setBotOwner } from './registry'
 import { ping, chatStream } from './agent/provider'
 import { runAgent, inferEnvSpec, type EnvVarSpec } from './agent/runtime'
@@ -82,10 +82,10 @@ export function resolveBot(bots: Bot[], query: string): Bot | null {
   )
 }
 
-/** Filter a bot list to only those visible to the given uid. Host sees all. */
-export function filterVisible<T extends { manifest: { id: string } }>(bots: T[], uid: number, isHost: boolean): T[] {
-  const visible = new Set(botsVisibleTo(uid, isHost).map((e) => e.id))
-  return bots.filter((b) => visible.has(b.manifest.id))
+/** Filter a bot list to only those OWNED by the given uid. Host sees all. */
+export function filterOwned<T extends { manifest: { id: string } }>(bots: T[], uid: number, isHost: boolean): T[] {
+  if (isHost) return bots
+  return bots.filter((b) => findEntry(b.manifest.id)?.ownerId === uid)
 }
 
 export function statusEmoji(status: string): string {
@@ -330,7 +330,7 @@ export class TelegramControlBot {
   }
 
   private async visibleBots(chatId: number, isOwner: boolean): Promise<Bot[]> {
-    return filterVisible(await sup.listBots(), chatId, isOwner)
+    return filterOwned(await sup.listBots(), chatId, isOwner)
   }
 
   private async loop(): Promise<void> {
@@ -832,7 +832,7 @@ export class TelegramControlBot {
 
   /** Fleet statistics: per-bot live CPU%, memory (+ % of RAM), uptime, and totals. */
   private async runStats(chatId: number, isOwner: boolean): Promise<void> {
-    const bots = filterVisible(await sup.listBots(), chatId, isOwner)
+    const bots = filterOwned(await sup.listBots(), chatId, isOwner)
     if (!bots.length) {
       await this.send(chatId, 'No bots imported yet.')
       return
@@ -1115,7 +1115,7 @@ export class TelegramControlBot {
       return
     }
     const isOwner = isAuthorized(chatId, this.getConfig().ownerChatId)
-    const bots = filterVisible(await sup.listBots(), chatId, isOwner)
+    const bots = filterOwned(await sup.listBots(), chatId, isOwner)
     if (!bots.length) {
       await this.send(chatId, 'No bots imported yet.')
       return
