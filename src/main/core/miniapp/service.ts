@@ -111,7 +111,7 @@ export class MiniAppService {
       if (m && !this.url) {
         this.url = m[0]
         console.log(`[miniapp] tunnel up: ${this.url}`)
-        void this.registerMenuButton(token, this.url + '?v=' + BUILD_VER)
+        void this.registerMenuButton(token, this.url + '?v=' + BUILD_VER, getControlConfig().ownerChatId)
       }
     }
     child.stdout?.on('data', onLine)
@@ -123,21 +123,30 @@ export class MiniAppService {
     })
   }
 
-  private async registerMenuButton(token: string, url: string): Promise<void> {
-    try {
-      const body = {
-        menu_button: { type: 'web_app', text: 'Sentinel', web_app: { url } }
-      }
-      const r = await fetch(`https://api.telegram.org/bot${token}/setChatMenuButton`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      })
-      console.log(r.ok ? '[miniapp] menu button set' : `[miniapp] menu button failed (${r.status})`)
-      if (r.ok) void notifyOwner(`🛰️ Sentinel dashboard is live — open it from the bot's menu button.`)
-    } catch (e) {
-      console.error('[miniapp] menu button error:', e)
+  private async registerMenuButton(token: string, url: string, ownerChatId?: string): Promise<void> {
+    const menu_button = { type: 'web_app', text: 'Sentinel', web_app: { url } }
+    const payloads: Array<{ label: string; body: { menu_button: typeof menu_button; chat_id?: number | string } }> = [
+      { label: 'default', body: { menu_button } }
+    ]
+    if (ownerChatId?.trim()) {
+      payloads.push({ label: `chat ${ownerChatId.trim()}`, body: { chat_id: ownerChatId.trim(), menu_button } })
     }
+
+    let registered = false
+    for (const { label, body } of payloads) {
+      try {
+        const r = await fetch(`https://api.telegram.org/bot${token}/setChatMenuButton`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        })
+        registered ||= r.ok
+        console.log(r.ok ? `[miniapp] menu button set (${label})` : `[miniapp] menu button failed (${label}, ${r.status})`)
+      } catch (e) {
+        console.error(`[miniapp] menu button error (${label}):`, e)
+      }
+    }
+    if (registered) void notifyOwner(`🛰️ Sentinel dashboard is live — open it from the bot's menu button.`)
   }
 
   // ---- request handling ----------------------------------------------------

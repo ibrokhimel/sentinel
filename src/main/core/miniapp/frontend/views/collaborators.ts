@@ -98,6 +98,6 @@ export const collaboratorsView: { js: string } = {
     +     '});'
     +   '}).catch(function(e){root.innerHTML=\'<div class="glass card"><div class="sub">error: \'+App.esc(e.message)+\'</div></div>\';});'
     + '}'
-    + 'App.registerView(\'team\',{label:\'Team\',icon:App.icon(\'shield\'),render:render});'
+    + 'App.registerView(\'team\',{label:\'Team\',icon:App.icon(\'users\'),render:render});'
     + '})();',
 }
