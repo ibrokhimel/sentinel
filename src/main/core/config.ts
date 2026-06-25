@@ -35,6 +35,7 @@ interface StoredConfig {
     maxBotsPerTenant: number
     aiPerDay: { chat: number; ask: number; fix: number }
   }
+  aiUsage?: Record<string, { date: string; chat: number; ask: number; fix: number }>
 }
 
 const DEFAULT: StoredConfig = {
@@ -67,7 +68,8 @@ function readStored(): StoredConfig {
       limits: parsed.limits ?? {
         maxBotsPerTenant: 5,
         aiPerDay: { chat: 30, ask: 20, fix: 1 }
-      }
+      },
+      aiUsage: parsed.aiUsage ?? {}
     }
   } catch {
     return structuredClone(DEFAULT)
@@ -423,4 +425,55 @@ export function setLimits(patch: Partial<TenantLimits>): void {
   const cur = c.limits ?? { maxBotsPerTenant: 5, aiPerDay: { chat: 30, ask: 20, fix: 1 } }
   c.limits = { ...cur, ...patch }
   writeStored(c)
+}
+
+// ---- AI usage metering -----
+
+export type AiKind = 'chat' | 'ask' | 'fix'
+
+function aiToday(): string {
+  const d = new Date()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${d.getFullYear()}-${m}-${day}`
+}
+
+/** Check (and, if allowed, consume) one unit of a tenant's daily AI quota.
+ *  Host is unlimited and never counted. */
+export function checkAndCountAi(uid: number, isHost: boolean, kind: AiKind): { ok: boolean; remaining: number } {
+  if (isHost) return { ok: true, remaining: Infinity }
+  const c = readStored()
+  const limit = (c.limits ?? { maxBotsPerTenant: 5, aiPerDay: { chat: 30, ask: 20, fix: 1 } }).aiPerDay[kind]
+  const usage = c.aiUsage ?? {}
+  const key = String(uid)
+  const today = aiToday()
+  let row = usage[key]
+  if (!row || row.date !== today) row = { date: today, chat: 0, ask: 0, fix: 0 }
+  if (row[kind] >= limit) {
+    usage[key] = row
+    c.aiUsage = usage
+    writeStored(c)
+    return { ok: false, remaining: 0 }
+  }
+  row[kind] += 1
+  usage[key] = row
+  c.aiUsage = usage
+  writeStored(c)
+  return { ok: true, remaining: Math.max(0, limit - row[kind]) }
+}
+
+/** Read-only quota view for display (rolls a stale day to zeros in the returned value only). */
+export function getAiUsage(
+  uid: number,
+  isHost: boolean
+): { used: { chat: number; ask: number; fix: number }; limits: { chat: number; ask: number; fix: number }; unlimited: boolean } {
+  const c = readStored()
+  const limits = (c.limits ?? { maxBotsPerTenant: 5, aiPerDay: { chat: 30, ask: 20, fix: 1 } }).aiPerDay
+  if (isHost) return { used: { chat: 0, ask: 0, fix: 0 }, limits, unlimited: true }
+  const row = (c.aiUsage ?? {})[String(uid)]
+  const used =
+    row && row.date === aiToday()
+      ? { chat: row.chat, ask: row.ask, fix: row.fix }
+      : { chat: 0, ask: 0, fix: 0 }
+  return { used, limits, unlimited: false }
 }
