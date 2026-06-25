@@ -54,6 +54,13 @@ describe('collaborator routes', () => {
     expect(set).not.toHaveBeenCalled()
   })
 
+  it('rejects adding the bot owner as a collaborator', async () => {
+    // ownerId is 7 in the mock entry; adding uid 7 should return 400 without calling setCollaborator
+    const json = await call('/api/bots/collaborators', 'POST', { botId: 'a', userId: 7, capabilities: { viewLogs: true } }, { userId: 7, isOwner: true })
+    expect(json).toHaveBeenCalledWith(400, expect.objectContaining({ error: 'owner/host already has full access' }))
+    expect(set).not.toHaveBeenCalled()
+  })
+
   it('rejects adding a non-approved user', async () => {
     const json = await call('/api/bots/collaborators', 'POST', { botId: 'a', userId: 555, capabilities: {} }, { userId: 7, isOwner: false })
     expect(json).toHaveBeenCalledWith(400, expect.objectContaining({ error: expect.any(String) }))

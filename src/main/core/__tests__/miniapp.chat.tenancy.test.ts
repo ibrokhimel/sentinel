@@ -7,8 +7,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // ---- registry mock -------------------------------------------------------
 // Bot 'a' is owned by uid 7; bot 'b' is owned by host uid 1.
+// uid 9 is a collaborator on bot 'a' with viewLogs only (no chat).
 vi.mock('../../registry', () => {
-  const entryA = { id: 'a', ownerId: 7, collaborators: {} }
+  const entryA = { id: 'a', ownerId: 7, collaborators: { '9': { viewLogs: true } } }
   const entryB = { id: 'b', ownerId: 1, collaborators: {} }
   return {
     readRegistry: () => [entryA, entryB],
@@ -115,6 +116,20 @@ describe('chat tenancy', () => {
     await route('POST', '/api/chat/sessions/delete').handler(c)
     expect(c.json).toHaveBeenCalledWith(404, expect.objectContaining({ error: 'not found' }))
     expect(SessionsMock.deleteSession).not.toHaveBeenCalled()
+  })
+
+  // (c2) creating an 'ask' session for a collaborator with viewLogs but NOT chat is denied
+  it('POST /api/chat/sessions rejects ask for collaborator without chat capability', async () => {
+    // uid 9 has viewLogs on bot 'a' but not chat — assertCap('chat') must throw ForbiddenError
+    const c = ctx(9, false, { botId: 'a', mode: 'ask', title: 'test' })
+    let threw = false
+    try {
+      await route('POST', '/api/chat/sessions').handler(c)
+    } catch {
+      threw = true
+    }
+    expect(threw).toBe(true)
+    expect(SessionsMock.createSession).not.toHaveBeenCalled()
   })
 
   // (d) confirm rejects an unknown/foreign token

@@ -44,7 +44,7 @@ async function stream(c: RouteCtx): Promise<void> {
   // a ForbiddenError propagates to 403 via service.ts cleanly.
   if (sess && sess.mode === 'ask' && sess.botId) {
     const entry = findEntry(String(sess.botId))
-    if (!can(c.auth.userId, c.auth.isOwner, entry, 'view')) {
+    if (!can(c.auth.userId, c.auth.isOwner, entry, 'chat')) {
       res.writeHead(200, {
         'Content-Type': 'text/event-stream; charset=utf-8',
         'Cache-Control': 'no-cache',
@@ -196,7 +196,7 @@ export const chatRoutes: Route[] = [
       const mode = b.mode === 'ask' ? 'ask' : 'chat'
       // If creating an 'ask' session for a specific bot, verify caller can see it.
       if (mode === 'ask' && b.botId) {
-        assertCap(c.auth.userId, c.auth.isOwner, String(b.botId), 'view')
+        assertCap(c.auth.userId, c.auth.isOwner, String(b.botId), 'chat')
       }
       c.json(200, {
         session: S.createSession({

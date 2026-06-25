@@ -51,7 +51,9 @@ function add(c: RouteCtx): void {
   const botId = String(b.botId ?? '')
   const uid = Number(b.userId)
   if (!Number.isFinite(uid)) { c.json(400, { error: 'userId must be a finite number' }); return }
-  if (!ownerEntry(c, botId)) return
+  const entry = ownerEntry(c, botId)
+  if (!entry) return
+  if (uid === entry.ownerId || uid === getHostUid()) { c.json(400, { error: 'owner/host already has full access' }); return }
   if (!getApprovedUsers().includes(uid)) { c.json(400, { error: 'user is not an approved tenant' }); return }
   setCollaborator(botId, uid, cleanCaps(b.capabilities))
   c.json(200, { ok: true, ...snapshot(botId) })
