@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import * as configModule from '../config'
 import * as sessionsModule from '../miniapp/sessions'
 import * as runtimeModule from '../agent/runtime'
+import * as registryModule from '../registry'
+import * as supervisorModule from '../supervisor'
 import { chatRoutes } from '../miniapp/routes/chat'
 
 const checkAndCountAi = vi.fn(() => ({ ok: true, remaining: 5 }))
@@ -24,12 +26,14 @@ vi.spyOn(configModule, 'getAppConfig').mockReturnValue({
 } as any)
 vi.spyOn(configModule, 'checkAndCountAi').mockImplementation(checkAndCountAi)
 vi.spyOn(runtimeModule, 'runAgent').mockImplementation(runAgent)
+vi.spyOn(registryModule, 'findEntry').mockReturnValue({ id: 'a', botId: 'a', access: 'owner' } as any)
+vi.spyOn(supervisorModule, 'getBot').mockImplementation(async () => ({ manifest: { id: 'a' }, dir: '/tmp' } as any))
 
 const mockSession = {
-  id: 'main:7',
+  id: 'a:7',
   title: 'Test',
-  botId: null,
-  mode: 'chat' as const,
+  botId: 'a',
+  mode: 'ask' as const,
   messages: [],
   createdAt: Date.now(),
   updatedAt: Date.now(),
@@ -49,16 +53,16 @@ function streamCtx(auth: { userId: number; isOwner: boolean }) {
 describe('chat AI metering', () => {
   beforeEach(() => { runAgent.mockClear(); checkAndCountAi.mockReset(); checkAndCountAi.mockReturnValue({ ok: true, remaining: 5 }) })
 
-  it('runs the agent when under the cap (kind=chat)', async () => {
+  it('runs the agent when under the cap (kind=ask)', async () => {
     const { p } = streamCtx({ userId: 7, isOwner: true })
     await p
-    expect(checkAndCountAi).toHaveBeenCalledWith(7, true, 'chat')
+    expect(checkAndCountAi).toHaveBeenCalledWith(7, true, 'ask')
     expect(runAgent).toHaveBeenCalled()
   })
 
   it('refuses and does NOT run the agent when over the cap', async () => {
     checkAndCountAi.mockReturnValue({ ok: false, remaining: 0 })
-    const { p, writes } = streamCtx({ userId: 7, isOwner: false })
+    const { p, writes } = streamCtx({ userId: 7, isOwner: true })
     await p
     expect(runAgent).not.toHaveBeenCalled()
     expect(writes.join('')).toMatch(/limit reached/i)
