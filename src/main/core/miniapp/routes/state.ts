@@ -1,7 +1,8 @@
 import * as sup from '../../supervisor'
 import { getAppConfig, setAutoApprove, setAutoUpdateEnabled, setNotifyConfig, setAgentConfig } from '../../config'
 import { tailBotLogs } from '../../telegramBot'
-import { botsVisibleTo, assertCap } from '../authz'
+import { botsVisibleTo, assertCap, can } from '../authz'
+import { findEntry } from '../../registry'
 import type { Route, RouteCtx } from './index'
 
 export const SECRET_KEY_RE = /TOKEN|HASH|SECRET|PASSWORD|KEY|API_ID|SESSION/i
@@ -21,12 +22,13 @@ function getEnv(c: RouteCtx): void {
   const id = c.url.searchParams.get('id') ?? ''
   assertCap(c.auth.userId, c.auth.isOwner, id, 'editEnv')
   const env = sup.getEnv(id)
+  const reveal = can(c.auth.userId, c.auth.isOwner, findEntry(id), 'viewSecrets')
   const current: Record<string, string> = {}
   const secretKeys: string[] = []
   for (const k of env.keys) {
     const isSecret = SECRET_KEY_RE.test(k)
     if (isSecret) secretKeys.push(k)
-    current[k] = isSecret ? '' : (env.current[k] ?? '')
+    current[k] = isSecret ? (reveal ? (env.current[k] ?? '') : '') : (env.current[k] ?? '')
   }
   const hasValue: Record<string, boolean> = {}
   for (const k of env.keys) hasValue[k] = Boolean(env.current[k])
