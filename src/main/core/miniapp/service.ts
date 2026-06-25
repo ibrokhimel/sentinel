@@ -90,6 +90,38 @@ export class MiniAppService {
     }
   }
 
+  /** The current public tunnel URL ('' if not up). */
+  publicUrl(): string {
+    return this.url
+  }
+
+  /** Force a fresh tunnel (the cloudflared quick-tunnel URL rotates), re-register
+   *  the menu button, and resolve with the new URL. Backs the control bot's
+   *  `/app` command so the owner can bring the dashboard back from Telegram.
+   *  Returns '' if not configured or the tunnel did not come up in time. */
+  async republish(): Promise<string> {
+    const cfg = getControlConfig()
+    if (!cfg.enabled || !cfg.token) return ''
+    if (this.server) {
+      // Server is up — just rotate the tunnel (kills the dead/stale one).
+      if (this.tunnel) {
+        this.tunnel.kill()
+        this.tunnel = null
+      }
+      this.url = ''
+      this.startTunnel(cfg.token)
+    } else {
+      // Nothing running — bring the whole thing up.
+      this.start()
+    }
+    // cloudflared usually prints the URL within a few seconds; poll until then.
+    const deadline = Date.now() + 25_000
+    while (!this.url && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 250))
+    }
+    return this.url
+  }
+
   // ---- tunnel + menu button ------------------------------------------------
 
   private startTunnel(token: string): void {

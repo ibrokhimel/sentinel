@@ -146,7 +146,9 @@ export function tailBotLogs(botId: string, n = 30): string {
   return tail || '(no output yet)'
 }
 
-type Keyboard = { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> }
+type Keyboard = {
+  inline_keyboard: Array<Array<{ text: string; callback_data: string } | { text: string; web_app: { url: string } }>>
+}
 type ReplyMarkup = Keyboard | null
 
 function mainMenuKeyboard(): Keyboard {
@@ -271,6 +273,7 @@ const HELP =
   '/reset — clear the AI’s conversation memory (start fresh)\n' +
   '/push [name] — push the bot’s current state to a sentinel-live branch\n' +
   '/apply — rebuild &amp; restart Sentinel (apply /dev changes)\n' +
+  '/app — refresh the Mini App link if it went offline\n' +
   '/upload — send a .zip to import a bot, or a file to add to one\n' +
   '/clone &lt;github url&gt; — import a repo as a new bot (or just paste the link)\n' +
   '/yolo — toggle auto-approve (skip all approval prompts)\n' +
@@ -303,7 +306,10 @@ export class TelegramControlBot {
     private getConfig: () => ControlConfig,
     private onChange?: () => void,
     /** Injected by index.ts (needs Electron app): relaunch the process. */
-    private restartApp?: () => void
+    private restartApp?: () => void,
+    /** Injected by index.ts: rotate the Mini App tunnel + re-register the menu
+     *  button, resolving with the fresh URL. Backs the `/app` command. */
+    private republishMiniapp?: () => Promise<string>
   ) {}
 
   /** Returns false if config is incomplete (nothing started). */
@@ -589,6 +595,20 @@ export class TelegramControlBot {
         if (!isOwner) { await this.send(chatId, '🛠 Host-only command — manage your bots in the dashboard.'); break }
         void this.runApply(chatId, true)
         break
+      case '/app': {
+        if (!isOwner) { await this.send(chatId, '🛠 Host-only command — manage your bots in the dashboard.'); break }
+        if (!this.republishMiniapp) { await this.send(chatId, '⚠️ Mini App service is not available in this mode.'); break }
+        await this.send(chatId, '🔄 Refreshing the Mini App — getting a fresh link…')
+        const appUrl = await this.republishMiniapp().catch(() => '')
+        if (!appUrl) {
+          await this.send(chatId, '⚠️ Could not bring the Mini App up. Check that cloudflared is installed and the tunnel can start.')
+          break
+        }
+        await this.send(chatId, '✅ <b>Sentinel is live.</b> Tap to open (or use the menu button):', {
+          inline_keyboard: [[{ text: '🚀 Open Sentinel', web_app: { url: appUrl + '?v=' + Date.now() } }]]
+        })
+        break
+      }
       case '/upload':
         await this.send(
           chatId,

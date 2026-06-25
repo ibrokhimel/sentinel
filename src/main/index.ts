@@ -108,7 +108,7 @@ app.whenReady().then(async () => {
     setupPowerMonitor()
     monitor = new MonitorService({ intervalMs: 30_000 })
     monitor.start()
-    control = new TelegramControlBot(() => getControlConfig(), undefined, restartSelf)
+    control = new TelegramControlBot(() => getControlConfig(), undefined, restartSelf, () => miniapp.republish())
     control.start()
     miniapp.start()
     return
@@ -121,7 +121,7 @@ app.whenReady().then(async () => {
 
   // In the GUI, run supervision in-process unless the always-on agent owns it
   // (avoid double crash-notifications and a duplicate Telegram poller → 409).
-  control = new TelegramControlBot(() => getControlConfig(), () => botsChanged(), restartSelf)
+  control = new TelegramControlBot(() => getControlConfig(), () => botsChanged(), restartSelf, () => miniapp.republish())
   if (!monitorAgentInstalled()) {
     monitor = new MonitorService({ intervalMs: 30_000, onChange: () => botsChanged() })
     monitor.start()
