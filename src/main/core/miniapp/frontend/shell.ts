@@ -330,6 +330,29 @@ h2,h3{letter-spacing:.2px;font-weight:600;}
 .badge.bad{color:var(--err);background:rgba(255,97,97,.15);border-color:rgba(255,97,97,.30);}
 .badge .ic-svg{color:inherit;}
 
+/* ---- collaborators (Team tab + bot-detail card) ---- */
+.collabbox{margin-top:10px;}
+.collabRow{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:14px 0;border-top:1px solid var(--glass-brd);}
+.collabName{order:1;flex:1 1 auto;min-width:0;font-size:14px;font-weight:600;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.collabRemove{order:2;flex:0 0 auto;}
+.collabCaps{order:3;flex:1 1 100%;display:flex;flex-wrap:wrap;gap:6px;}
+.capToggle{display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border:1px solid var(--glass-brd);border-radius:999px;font-size:12px;line-height:1;color:var(--hint);cursor:pointer;user-select:none;transition:color .15s ease,background .15s ease,border-color .15s ease;}
+.capToggle input{margin:0;width:15px;height:15px;accent-color:var(--ok);flex:0 0 auto;cursor:pointer;}
+.capToggle:has(input:checked){color:var(--txt);background:var(--surface-el);border-color:var(--hair-strong);}
+.collabAdd{display:flex;gap:8px;align-items:center;margin-top:14px;}
+.collabSelect{flex:1 1 auto;min-width:0;appearance:none;-webkit-appearance:none;background:var(--surface-el);border:1px solid var(--glass-brd);color:var(--txt);border-radius:8px;padding:9px 12px;font:inherit;font-size:14px;}
+.collabAddBtn{flex:0 0 auto;}
+
+/* ---- env secret reveal row ---- */
+.envRow{display:flex;align-items:center;gap:8px;}
+.envRow input{flex:1 1 auto;min-width:0;}
+.envToggle{flex:0 0 auto;}
+
+/* ---- tab bar: keep five tabs from cramming on narrow phones ---- */
+.tabbar{gap:4px;}
+.tab{font-size:10.5px;padding:6px 3px;gap:2px;}
+.tab span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
 /* ---- toast ---- */
 .toastWrap{position:fixed;left:12px;right:12px;bottom:calc(108px + env(safe-area-inset-bottom));z-index:60;display:flex;flex-direction:column;gap:8px;pointer-events:none;}
 .toast{
