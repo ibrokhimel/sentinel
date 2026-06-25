@@ -3,4 +3,5 @@ import { fleetView } from './views/fleet'
 import { chatView } from './views/chat'
 import { settingsView } from './views/settings'
 import { botsManageView } from './views/botsManage'
-export const MINIAPP_HTML = assemble([fleetView, chatView, settingsView, botsManageView])
+import { collaboratorsView } from './views/collaborators'
+export const MINIAPP_HTML = assemble([fleetView, chatView, settingsView, botsManageView, collaboratorsView])

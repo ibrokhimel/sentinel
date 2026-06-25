@@ -4,7 +4,7 @@
  * POST /api/bots/collaborators         { botId, userId, capabilities } -> { ok, ... }
  * POST /api/bots/collaborators/remove  { botId, userId } -> { ok, ... }
  */
-import { findEntry, setCollaborator, removeCollaborator, type Capabilities } from '../../registry'
+import { findEntry, setCollaborator, removeCollaborator, readRegistry, type Capabilities } from '../../registry'
 import { getApprovedProfiles, getApprovedUsers, getUserProfile, getHostUid } from '../../config'
 import type { Route, RouteCtx } from './index'
 
@@ -69,8 +69,29 @@ function remove(c: RouteCtx): void {
   c.json(200, { ok: true, ...snapshot(botId) })
 }
 
+function collaborations(c: RouteCtx): void {
+  const uid = c.auth.userId
+  const isHost = c.auth.isOwner
+  const host = getHostUid()
+  const entries = readRegistry()
+  const owned = entries
+    .filter((e) => isHost || e.ownerId === uid)
+    .map((e) => {
+      const map = e.collaborators ?? {}
+      const collaborators = Object.keys(map).map((u) => ({ ...getUserProfile(Number(u)), caps: map[u] }))
+      const existing = new Set(Object.keys(map).map(Number))
+      const addable = getApprovedProfiles().filter((p) => p.id !== host && p.id !== e.ownerId && !existing.has(p.id))
+      return { id: e.id, name: e.name, collaborators, addable }
+    })
+  const shared = entries
+    .filter((e) => e.ownerId !== uid && e.collaborators && e.collaborators[String(uid)])
+    .map((e) => ({ id: e.id, name: e.name, owner: getUserProfile(e.ownerId as number), caps: (e.collaborators as Record<string, Capabilities>)[String(uid)] }))
+  c.json(200, { owned, shared })
+}
+
 export const collaboratorRoutes: Route[] = [
   { method: 'GET', path: '/api/bots/collaborators', ownerOnly: false, handler: list },
   { method: 'POST', path: '/api/bots/collaborators', ownerOnly: false, handler: add },
-  { method: 'POST', path: '/api/bots/collaborators/remove', ownerOnly: false, handler: remove }
+  { method: 'POST', path: '/api/bots/collaborators/remove', ownerOnly: false, handler: remove },
+  { method: 'GET', path: '/api/collaborations', ownerOnly: false, handler: collaborations }
 ]
