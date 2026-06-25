@@ -65,7 +65,7 @@ export const settingsView: { js: string } = {
     + '}'
     + 'function render(root,st){'
     +   'var c=st.config;'
-    +   'if(!c){root.innerHTML=\'<div class="glass card"><b>Settings</b><p class="sub" style="margin-top:8px">These are host-level settings managed by the Sentinel owner.</p><p class="sub">As a tenant you manage your own bots from the dashboard — your bot list and runtime controls are available in the Fleet and Bots views.</p></div>\';return;}'
+    +   'if(!c){var h=\'<div class="glass card"><b>Settings</b><p class="sub" style="margin-top:8px">These are host-level settings managed by the Sentinel owner.</p><p class="sub">As a tenant you manage your own bots from the dashboard — your bot list and runtime controls are available in the Fleet and Bots views.</p>\';if(st.ai&&!st.ai.unlimited){h+=\'<div class="sub" style="margin-top:8px">AI today — ask \'+st.ai.used.ask+\'/\'+st.ai.limits.ask+\' · fix \'+st.ai.used.fix+\'/\'+st.ai.limits.fix+\'</div>\';}h+=\'</div>\';root.innerHTML=h;return;}'
     +   'var ro=!st.owner;'
     +   'if(ro){'
     +     'var ho=\'<div class="banner">\'+App.icon(\'lock\',16)+\'<span><b>Read-only.</b> Only the bot owner can change these settings.</span></div>\';'

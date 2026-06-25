@@ -47,7 +47,8 @@ vi.mock('../config', () => ({
   setAutoApprove: vi.fn(),
   setAutoUpdateEnabled: vi.fn(),
   setNotifyConfig: vi.fn(),
-  setAgentConfig: vi.fn()
+  setAgentConfig: vi.fn(),
+  getAiUsage: vi.fn((_uid: number, isHost: boolean) => ({ used: { chat: 0, ask: 0, fix: 0 }, limits: { chat: 30, ask: 20, fix: 1 }, unlimited: isHost }))
 }))
 
 import { stateRoutes } from '../miniapp/routes/state'
