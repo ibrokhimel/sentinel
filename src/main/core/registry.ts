@@ -74,6 +74,31 @@ export function setBotOwner(id: string, ownerId: number): void {
   writeRegistry(entries)
 }
 
+const CAP_KEYS = ['viewLogs', 'chat', 'startStop', 'deploy', 'editEnv', 'viewSecrets'] as const
+
+/** Add or replace a collaborator's capability set on a bot (known keys only). */
+export function setCollaborator(botId: string, uid: number, caps: Capabilities): void {
+  const entries = readRegistry()
+  const e = entries.find((x) => x.id === botId)
+  if (!e) return
+  const clean: Capabilities = {}
+  for (const k of CAP_KEYS) if (caps[k] === true) clean[k] = true
+  const map = e.collaborators ?? {}
+  map[String(uid)] = clean
+  e.collaborators = map
+  writeRegistry(entries)
+}
+
+/** Remove a collaborator from a bot; prune the map if it becomes empty. */
+export function removeCollaborator(botId: string, uid: number): void {
+  const entries = readRegistry()
+  const e = entries.find((x) => x.id === botId)
+  if (!e || !e.collaborators) return
+  delete e.collaborators[String(uid)]
+  if (Object.keys(e.collaborators).length === 0) delete e.collaborators
+  writeRegistry(entries)
+}
+
 export function botsOwnedBy(uid: number): RegistryEntry[] {
   return readRegistry().filter((e) => e.ownerId === uid)
 }
