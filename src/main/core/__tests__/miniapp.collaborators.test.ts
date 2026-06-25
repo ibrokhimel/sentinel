@@ -37,6 +37,11 @@ describe('collaborator routes', () => {
     expect(payload.addable.map((u) => u.id).sort()).toEqual([3]) // 1=host,7=owner,2=existing excluded
   })
 
+  it('GET is forbidden for a non-owner non-host', async () => {
+    const json = await call('/api/bots/collaborators', 'GET', {}, { userId: 99, isOwner: false }, '?botId=a')
+    expect(json).toHaveBeenCalledWith(403, expect.objectContaining({ error: expect.any(String) }))
+  })
+
   it('owner can add a collaborator with coerced caps', async () => {
     const json = await call('/api/bots/collaborators', 'POST', { botId: 'a', userId: 3, capabilities: { viewLogs: true } }, { userId: 7, isOwner: false })
     expect(set).toHaveBeenCalledWith('a', 3, { viewLogs: true })
