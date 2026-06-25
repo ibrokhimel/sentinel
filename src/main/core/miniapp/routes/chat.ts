@@ -12,7 +12,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import * as sup from '../../supervisor'
-import { getAgentConfig, getAppConfig } from '../../config'
+import { getAgentConfig, getAppConfig, checkAndCountAi } from '../../config'
 import { type AgentProvider, type ChatMessage } from '../../agent/provider'
 import { runAgent } from '../../agent/runtime'
 import { findEntry } from '../../registry'
@@ -74,6 +74,13 @@ async function stream(c: RouteCtx): Promise<void> {
   if (!msg) {
     send({ type: 'error', message: 'empty message' })
     return void res.end()
+  }
+  if (sess.mode === 'ask') {
+    const meter = checkAndCountAi(c.auth.userId, c.auth.isOwner, 'ask')
+    if (!meter.ok) {
+      send({ type: 'error', message: 'Daily AI limit reached — resets tomorrow.' })
+      return void res.end()
+    }
   }
   const prov: AgentProvider = { baseUrl: p.baseUrl, apiKey: p.apiKey, model: p.model }
   const ac = new AbortController()

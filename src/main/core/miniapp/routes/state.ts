@@ -1,5 +1,5 @@
 import * as sup from '../../supervisor'
-import { getAppConfig, setAutoApprove, setAutoUpdateEnabled, setNotifyConfig, setAgentConfig } from '../../config'
+import { getAppConfig, setAutoApprove, setAutoUpdateEnabled, setNotifyConfig, setAgentConfig, getAiUsage } from '../../config'
 import { tailBotLogs } from '../../telegramBot'
 import { botsVisibleTo, assertCap, can } from '../authz'
 import { findEntry } from '../../registry'
@@ -10,7 +10,7 @@ export const SECRET_KEY_RE = /TOKEN|HASH|SECRET|PASSWORD|KEY|API_ID|SESSION/i
 async function getState(c: RouteCtx): Promise<void> {
   const visible = new Set(botsVisibleTo(c.auth.userId, c.auth.isOwner).map((e) => e.id))
   const bots = (await sup.listBots()).filter((b) => visible.has(b.manifest.id))
-  c.json(200, { bots, config: c.auth.isOwner ? getAppConfig() : null, owner: c.auth.isOwner })
+  c.json(200, { bots, config: c.auth.isOwner ? getAppConfig() : null, owner: c.auth.isOwner, ai: getAiUsage(c.auth.userId, c.auth.isOwner) })
 }
 async function getLogs(c: RouteCtx): Promise<void> {
   const id = c.url.searchParams.get('id') ?? ''
